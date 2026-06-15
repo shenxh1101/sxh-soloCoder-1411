@@ -1,11 +1,11 @@
 const Gantt = (function() {
-    const WORK_START_MINUTE = 480;
-    const WORK_END_MINUTE = 1080;
-    const WORK_MINUTES_PER_DAY = WORK_END_MINUTE - WORK_START_MINUTE;
+    let WORK_START_MINUTE = 480;
+    let WORK_END_MINUTE = 1080;
+    let WORK_MINUTES_PER_DAY = WORK_END_MINUTE - WORK_START_MINUTE;
     const MINUTES_PER_DAY = 1440;
     const SNAP_MINUTES = 15;
     
-    const DISPLAY_DAYS = 3;
+    const DISPLAY_DAYS = 7;
     
     let config = {
         timeScale: 60,
@@ -27,8 +27,18 @@ const Gantt = (function() {
     };
 
     function init() {
+        updateCalendarSettings();
         renderTimeRuler();
         setupDragAndDrop();
+    }
+
+    function updateCalendarSettings() {
+        const calendar = Store.getCalendar();
+        if (calendar) {
+            WORK_START_MINUTE = calendar.workStartTime;
+            WORK_END_MINUTE = calendar.workEndTime;
+            WORK_MINUTES_PER_DAY = WORK_END_MINUTE - WORK_START_MINUTE;
+        }
     }
 
     function getTimeScale() {
@@ -43,6 +53,27 @@ const Gantt = (function() {
 
     function getDisplayDays() {
         return config.displayDays;
+    }
+
+    function getWorkDaysToDisplay() {
+        const workDays = [];
+        let currentDate = new Date();
+        let daysFound = 0;
+        
+        while (daysFound < config.displayDays) {
+            if (Store.isWorkDay(currentDate) && !Store.isDowntime(currentDate)) {
+                workDays.push(new Date(currentDate));
+                daysFound++;
+            }
+            currentDate.setDate(currentDate.getDate() + 1);
+        }
+        
+        return workDays;
+    }
+
+    function getDisplayDayIndex(dayOffset) {
+        const workDays = getWorkDaysToDisplay();
+        return Math.min(dayOffset, workDays.length - 1);
     }
 
     function getTotalDisplayMinutes() {
@@ -60,27 +91,37 @@ const Gantt = (function() {
     }
 
     function getDisplayPosition(startMinute, dayOffset) {
-        const relativeMinutes = dayOffset * WORK_MINUTES_PER_DAY + (startMinute - WORK_START_MINUTE);
+        const displayIndex = getDisplayDayIndex(dayOffset);
+        const relativeMinutes = displayIndex * WORK_MINUTES_PER_DAY + (startMinute - WORK_START_MINUTE);
         return (relativeMinutes / getTotalDisplayMinutes()) * 100;
     }
 
     function positionToAbsolute(percent, trackWidth, clientX, trackLeft) {
         const relativeMinutes = (percent / 100) * getTotalDisplayMinutes();
-        const dayOffset = Math.floor(relativeMinutes / WORK_MINUTES_PER_DAY);
+        const displayIndex = Math.floor(relativeMinutes / WORK_MINUTES_PER_DAY);
         const minutesInDay = relativeMinutes % WORK_MINUTES_PER_DAY;
         const startMinute = WORK_START_MINUTE + minutesInDay;
+        
+        const workDays = getWorkDaysToDisplay();
+        const actualDate = workDays[Math.min(displayIndex, workDays.length - 1)];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const dayOffset = Math.floor((actualDate - today) / (1000 * 60 * 60 * 24));
+        
         return { startMinute, dayOffset };
     }
 
     function renderTimeRuler() {
+        updateCalendarSettings();
         const ruler = document.getElementById('timeRuler');
         ruler.innerHTML = '';
         
         const totalMinutes = getTotalDisplayMinutes();
         const interval = config.timeScale;
+        const workDays = getWorkDaysToDisplay();
         
-        for (let day = 0; day < config.displayDays; day++) {
-            const dayStartPercent = (day * WORK_MINUTES_PER_DAY / totalMinutes) * 100;
+        workDays.forEach((date, displayIndex) => {
+            const dayStartPercent = (displayIndex * WORK_MINUTES_PER_DAY / totalMinutes) * 100;
             const dayWidthPercent = (WORK_MINUTES_PER_DAY / totalMinutes) * 100;
             
             const dayLabel = document.createElement('div');
@@ -88,12 +129,21 @@ const Gantt = (function() {
             dayLabel.style.left = `${dayStartPercent}%`;
             dayLabel.style.width = `${dayWidthPercent}%`;
             
-            const date = new Date();
-            date.setDate(date.getDate() + day);
-            const dayNames = ['今天', '明天', '后天'];
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const compareDate = new Date(date);
+            compareDate.setHours(0, 0, 0, 0);
+            const diffDays = Math.floor((compareDate - today) / (1000 * 60 * 60 * 24));
+            
+            let dayName;
+            if (diffDays === 0) dayName = '今天';
+            else if (diffDays === 1) dayName = '明天';
+            else if (diffDays === 2) dayName = '后天';
+            else dayName = `${date.getMonth() + 1}/${date.getDate()}`;
+            
             dayLabel.innerHTML = `
-                <div class="day-name">${dayNames[day] || `第${day + 1}天`}</div>
-                <div class="day-date">${date.getMonth() + 1}/${date.getDate()}</div>
+                <div class="day-name">${dayName}</div>
+                <div class="day-date">${date.getMonth() + 1}/${date.getDate()} 周${'日一二三四五六'[date.getDay()]}</div>
             `;
             ruler.appendChild(dayLabel);
             
@@ -102,21 +152,21 @@ const Gantt = (function() {
                 const marker = document.createElement('div');
                 marker.className = 'time-marker';
                 
-                const minutesFromStart = day * WORK_MINUTES_PER_DAY + i * interval;
+                const minutesFromStart = displayIndex * WORK_MINUTES_PER_DAY + i * interval;
                 const percent = (minutesFromStart / totalMinutes) * 100;
                 marker.style.left = `${percent}%`;
                 
-                const hour = 8 + Math.floor(i * interval / 60);
-                const minute = (i * interval) % 60;
-                marker.textContent = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+                const hour = Math.floor(WORK_START_MINUTE / 60) + Math.floor(i * interval / 60);
+                const minute = (WORK_START_MINUTE % 60) + (i * interval) % 60;
+                marker.textContent = `${hour.toString().padStart(2, '0')}:${(minute % 60).toString().padStart(2, '0')}`;
                 
-                if (minute === 0) {
+                if (minute % 60 === 0) {
                     marker.classList.add('hour-marker');
                 }
                 
                 ruler.appendChild(marker);
             }
-        }
+        });
     }
 
     function render() {
@@ -134,61 +184,192 @@ const Gantt = (function() {
         const orders = Store.getOrdersByLine(lineId);
         
         orders.forEach(order => {
-            const bar = createGanttBar(order, lineId);
-            track.appendChild(bar);
+            const segments = createOrderSegments(order);
+            segments.forEach((segment, segIndex) => {
+                const bar = createGanttBar(order, lineId, segment, segIndex, segments.length);
+                track.appendChild(bar);
+            });
         });
     }
 
-    function createGanttBar(order, lineId) {
+    function createOrderSegments(order) {
+        const calendar = Store.getCalendar();
+        if (!order.segments || order.segments.length === 0) {
+            if (order.stdMinutes > WORK_MINUTES_PER_DAY || 
+                (order.startMinute + order.stdMinutes) > WORK_END_MINUTE) {
+                return Store.splitOrderForMultiDay(order, order.lineId, order.startMinute, order.dayOffset || 0);
+            }
+            return [{
+                dayOffset: order.dayOffset || 0,
+                startMinute: order.startMinute,
+                duration: order.stdMinutes,
+                endMinute: order.startMinute + order.stdMinutes
+            }];
+        }
+        return order.segments;
+    }
+
+    function createGanttBar(order, lineId, segment, segIndex, totalSegments) {
         const bar = document.createElement('div');
         bar.className = `gantt-bar ${lineId}`;
         bar.dataset.orderId = order.id;
         bar.dataset.lineId = lineId;
-        bar.draggable = true;
+        bar.dataset.segIndex = segIndex;
+        bar.draggable = segIndex === 0;
+        
+        const status = order.status || 'scheduled';
+        bar.classList.add(`status-${status}`);
+        
+        const statusColor = Store.STATUS_COLORS[status];
+        if (statusColor && status !== 'scheduled') {
+            bar.style.background = statusColor;
+            bar.style.borderColor = statusColor;
+        }
         
         const isOverdue = Utils.isOverdue(order.dueDate);
         if (isOverdue) {
             bar.classList.add('overdue');
         }
         
-        const dayOffset = order.dayOffset || 0;
-        const leftPercent = getDisplayPosition(order.startMinute, dayOffset);
-        const widthPercent = (order.stdMinutes / getTotalDisplayMinutes()) * 100;
+        const dayOffset = segment.dayOffset;
+        const leftPercent = getDisplayPosition(segment.startMinute, dayOffset);
+        const widthPercent = (segment.duration / getTotalDisplayMinutes()) * 100;
         
         bar.style.left = `${leftPercent}%`;
         bar.style.width = `${widthPercent}%`;
         
-        const endTime = order.startMinute + order.stdMinutes;
-        const spillsOver = endTime > WORK_END_MINUTE;
-        if (spillsOver) {
-            bar.classList.add('spills-over');
+        const isFirstSegment = segIndex === 0;
+        const isLastSegment = segIndex === totalSegments - 1;
+        
+        if (totalSegments > 1) {
+            if (!isFirstSegment) {
+                bar.classList.add('segment-continued');
+            }
+            if (!isLastSegment) {
+                bar.classList.add('segment-continuing');
+            }
         }
+        
+        const statusLabel = Store.STATUS_LABELS[status] || '';
+        const timeLabel = `${Utils.formatMinutes(segment.startMinute)} - ${Utils.formatMinutes(segment.endMinute)}`;
+        
+        let segmentLabel = '';
+        if (totalSegments > 1) {
+            if (isFirstSegment) {
+                segmentLabel = `<div class="bar-segment">↓ 跨天 ${totalSegments}段</div>`;
+            } else {
+                segmentLabel = `<div class="bar-segment">↑ 续上段</div>`;
+            }
+        }
+        
+        const dayLabel = dayOffset > 0 ? `<div class="bar-day">Day ${dayOffset + 1}</div>` : '';
+        const statusBadge = status !== 'scheduled' ? `<div class="bar-status">${statusLabel}</div>` : '';
         
         bar.innerHTML = `
             <div class="bar-content">
                 <div class="bar-model">${order.productModel}</div>
-                <div class="bar-time">${Utils.formatMinutes(order.startMinute)} - ${Utils.formatMinutes(Math.min(endTime, WORK_END_MINUTE))}</div>
-                ${dayOffset > 0 ? `<div class="bar-day">Day ${dayOffset + 1}</div>` : ''}
+                <div class="bar-time">${timeLabel}</div>
+                ${dayLabel}
+                ${statusBadge}
+                ${segmentLabel}
+                ${isLastSegment ? `
+                    <div class="bar-actions">
+                        <button class="bar-action-btn status-btn" title="切换状态" data-action="status">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"/>
+                            </svg>
+                        </button>
+                        <button class="bar-action-btn delete-btn" title="删除工单" data-action="delete">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+                ` : ''}
             </div>
-            <div class="bar-delete" title="删除工单">×</div>
         `;
         
-        bar.querySelector('.bar-delete').addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (confirm(`确定删除工单 ${order.productModel} 吗？`)) {
-                Store.deleteWorkOrder(order.id);
-                render();
-                Utils.showToast('工单已删除', 'success');
-            }
+        const actionBtns = bar.querySelectorAll('.bar-action-btn');
+        actionBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const action = btn.dataset.action;
+                if (action === 'delete') {
+                    if (confirm(`确定删除工单 ${order.productModel} 吗？`)) {
+                        Store.deleteWorkOrder(order.id);
+                        render();
+                        Utils.showToast('工单已删除', 'success');
+                    }
+                } else if (action === 'status') {
+                    showStatusMenu(order, e);
+                }
+            });
         });
         
         bar.addEventListener('click', (e) => {
-            if (!dragState.isDragging) {
+            if (!dragState.isDragging && !e.target.closest('.bar-action-btn')) {
                 App.openEditModal(order.id);
             }
         });
         
+        if (isFirstSegment) {
+            bar.addEventListener('mousedown', (e) => {
+                if (!e.target.closest('.bar-action-btn')) {
+                    handleBarMouseDown(e, bar, order, segment);
+                }
+            });
+        }
+        
         return bar;
+    }
+
+    function showStatusMenu(order, event) {
+        const existingMenu = document.querySelector('.status-menu');
+        if (existingMenu) existingMenu.remove();
+        
+        const menu = document.createElement('div');
+        menu.className = 'status-menu active';
+        
+        const statuses = [
+            { value: 'pending', label: '待排程', color: Store.STATUS_COLORS.pending },
+            { value: 'scheduled', label: '已排程', color: Store.STATUS_COLORS.scheduled },
+            { value: 'in_progress', label: '已开工', color: Store.STATUS_COLORS.in_progress },
+            { value: 'completed', label: '已完成', color: Store.STATUS_COLORS.completed },
+            { value: 'cancelled', label: '已取消', color: Store.STATUS_COLORS.cancelled }
+        ];
+        
+        statuses.forEach(s => {
+            const item = document.createElement('div');
+            item.className = 'status-menu-item';
+            item.innerHTML = `
+                <span class="status-dot" style="background: ${s.color}"></span>
+                <span>${s.label}</span>
+                ${order.status === s.value ? '<span class="status-check">✓</span>' : ''}
+            `;
+            item.addEventListener('click', () => {
+                Store.updateOrderStatus(order.id, s.value);
+                render();
+                Utils.showToast(`工单状态已更新为「${s.label}」`, 'success');
+                menu.remove();
+            });
+            menu.appendChild(item);
+        });
+        
+        document.body.appendChild(menu);
+        
+        const rect = event.target.getBoundingClientRect();
+        menu.style.top = `${rect.bottom + window.scrollY + 5}px`;
+        menu.style.left = `${rect.left + window.scrollX}px`;
+        
+        setTimeout(() => {
+            document.addEventListener('click', function closeMenu(e) {
+                if (!menu.contains(e.target)) {
+                    menu.remove();
+                    document.removeEventListener('click', closeMenu);
+                }
+            });
+        }, 0);
     }
 
     function renderUnscheduledList() {
@@ -220,6 +401,7 @@ const Gantt = (function() {
             card.draggable = true;
             
             const isOverdue = Utils.isOverdue(order.dueDate);
+            const statusColor = Store.STATUS_COLORS[order.status] || '#ff9500';
             
             card.innerHTML = `
                 <div class="order-card-header">
@@ -229,6 +411,9 @@ const Gantt = (function() {
                 <div class="order-card-footer">
                     <span class="order-time">${order.stdMinutes}分钟</span>
                     <span class="order-due ${isOverdue ? 'overdue' : ''}">${Utils.formatDate(order.dueDate)}</span>
+                </div>
+                <div class="order-card-status" style="background: ${statusColor}">
+                    ${Store.STATUS_LABELS[order.status] || '待排程'}
                 </div>
             `;
             
@@ -251,6 +436,8 @@ const Gantt = (function() {
         document.getElementById('totalOrders').textContent = total;
         document.getElementById('overdueOrders').textContent = overdue;
         document.getElementById('avgLoad').textContent = `${avgLoad.toFixed(0)}%`;
+        
+        App.updateStatusStats();
         
         ['lineA', 'lineB', 'lineC'].forEach((lineId, index) => {
             const load = Store.getLineLoad(lineId);
@@ -317,17 +504,21 @@ const Gantt = (function() {
         const { startMinute, dayOffset } = positionToAbsolute(percent, trackRect.width, e.clientX, trackRect.left);
         
         let clampedStart = Utils.roundToNearest(startMinute, SNAP_MINUTES);
-        clampedStart = Utils.clamp(clampedStart, WORK_START_MINUTE, WORK_END_MINUTE - order.stdMinutes);
+        const maxStart = WORK_END_MINUTE - Math.min(order.stdMinutes, WORK_MINUTES_PER_DAY);
+        clampedStart = Utils.clamp(clampedStart, WORK_START_MINUTE, maxStart);
         
         if (Store.hasConflict(orderId, lineId, clampedStart, order.stdMinutes, dayOffset)) {
             Utils.showToast('时间冲突，无法放置', 'error');
             return;
         }
         
+        const segments = Store.splitOrderForMultiDay(order, lineId, clampedStart, dayOffset);
+        
         Store.updateWorkOrder(orderId, {
             lineId: lineId,
-            startMinute: clampedStart,
-            dayOffset: dayOffset
+            startMinute: segments[0].startMinute,
+            dayOffset: segments[0].dayOffset,
+            segments: segments.length > 1 ? segments : null
         });
         
         render();
@@ -342,44 +533,34 @@ const Gantt = (function() {
         });
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
-        setupGanttBarDrag();
-    });
-
-    function setupGanttBarDrag() {
-        document.addEventListener('mousedown', (e) => {
-            const bar = e.target.closest('.gantt-bar');
-            if (!bar || e.target.classList.contains('bar-delete')) return;
-            
-            e.preventDefault();
-            const orderId = bar.dataset.orderId;
-            const order = Store.getWorkOrderById(orderId);
-            if (!order) return;
-            
-            const track = bar.parentElement;
-            const trackRect = track.getBoundingClientRect();
-            
-            dragState = {
-                isDragging: true,
-                orderId: orderId,
-                startX: e.clientX,
-                startY: e.clientY,
-                originalLine: order.lineId,
-                originalStart: order.startMinute,
-                originalDay: order.dayOffset || 0,
-                currentLine: order.lineId,
-                currentStart: order.startMinute,
-                currentDay: order.dayOffset || 0,
-                element: bar,
-                trackWidth: trackRect.width,
-                trackRect: trackRect
-            };
-            
-            bar.classList.add('dragging');
-            
-            const minutesPerPixel = getTotalDisplayMinutes() / trackRect.width;
-            dragState.minutesPerPixel = minutesPerPixel;
-        });
+    function handleBarMouseDown(e, bar, order, segment) {
+        if (e.target.classList.contains('bar-action-btn')) return;
+        
+        e.preventDefault();
+        const track = bar.parentElement;
+        const trackRect = track.getBoundingClientRect();
+        
+        dragState = {
+            isDragging: true,
+            orderId: order.id,
+            startX: e.clientX,
+            startY: e.clientY,
+            originalLine: order.lineId,
+            originalStart: order.startMinute,
+            originalDay: order.dayOffset || 0,
+            originalSegments: order.segments ? Utils.deepClone(order.segments) : null,
+            currentLine: order.lineId,
+            currentStart: segment.startMinute,
+            currentDay: segment.dayOffset,
+            element: bar,
+            trackWidth: trackRect.width,
+            trackRect: trackRect
+        };
+        
+        bar.classList.add('dragging');
+        
+        const minutesPerPixel = getTotalDisplayMinutes() / trackRect.width;
+        dragState.minutesPerPixel = minutesPerPixel;
     }
 
     function handleMouseMove(e) {
@@ -395,10 +576,16 @@ const Gantt = (function() {
         const originalAbsolute = dragState.originalDay * WORK_MINUTES_PER_DAY + (dragState.originalStart - WORK_START_MINUTE);
         let newAbsolute = originalAbsolute + deltaMinutes;
         newAbsolute = Utils.roundToNearest(newAbsolute, SNAP_MINUTES);
-        newAbsolute = Utils.clamp(newAbsolute, 0, getTotalDisplayMinutes() - order.stdMinutes);
+        newAbsolute = Utils.clamp(newAbsolute, 0, getTotalDisplayMinutes() - Math.min(order.stdMinutes, WORK_MINUTES_PER_DAY));
         
-        const newDay = Math.floor(newAbsolute / WORK_MINUTES_PER_DAY);
+        const newDisplayIndex = Math.floor(newAbsolute / WORK_MINUTES_PER_DAY);
         const newStart = WORK_START_MINUTE + (newAbsolute % WORK_MINUTES_PER_DAY);
+        
+        const workDays = getWorkDaysToDisplay();
+        const actualDate = workDays[Math.min(newDisplayIndex, workDays.length - 1)];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const newDay = Math.floor((actualDate - today) / (1000 * 60 * 60 * 24));
         
         const tracks = document.querySelectorAll('.gantt-track');
         let newLine = dragState.originalLine;
@@ -445,10 +632,18 @@ const Gantt = (function() {
             );
             
             if (!hasConflict) {
+                const segments = Store.splitOrderForMultiDay(
+                    order, 
+                    dragState.currentLine, 
+                    dragState.currentStart, 
+                    dragState.currentDay
+                );
+                
                 Store.updateWorkOrder(dragState.orderId, {
                     lineId: dragState.currentLine,
-                    startMinute: dragState.currentStart,
-                    dayOffset: dragState.currentDay
+                    startMinute: segments[0].startMinute,
+                    dayOffset: segments[0].dayOffset,
+                    segments: segments.length > 1 ? segments : null
                 });
             } else {
                 Utils.showToast('时间冲突，已恢复原位', 'warning');
@@ -483,6 +678,8 @@ const Gantt = (function() {
         getTimeScale,
         setTimeScale,
         getDisplayDays,
-        getTotalDisplayMinutes
+        getTotalDisplayMinutes,
+        updateCalendarSettings,
+        renderTimeRuler
     };
 })();

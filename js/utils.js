@@ -58,6 +58,11 @@ const Utils = (function() {
         return Math.round(value / step) * step;
     }
 
+    function timeToMinutes(timeStr) {
+        const parts = timeStr.split(':');
+        return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+    }
+
     function debounce(func, wait) {
         let timeout;
         return function executedFunction(...args) {
@@ -84,6 +89,7 @@ const Utils = (function() {
         showToast,
         clamp,
         roundToNearest,
+        timeToMinutes,
         debounce,
         deepClone
     };
