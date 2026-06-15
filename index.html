@@ -49,6 +49,14 @@
                 </div>
                 
                 <div class="btn-group">
+                    <span class="group-label">刻度</span>
+                    <select class="select-inline" id="timeScaleSelect">
+                        <option value="60">1小时</option>
+                        <option value="30">30分钟</option>
+                    </select>
+                </div>
+                
+                <div class="btn-group">
                     <button class="btn btn-secondary" id="btnExportCsv">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -78,6 +86,12 @@
                             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
                             <polyline points="17 21 17 13 7 13 7 21"/>
                             <polyline points="7 3 7 8 15 8"/>
+                        </svg>
+                    </button>
+                    <button class="btn btn-icon" id="btnCopyScheme" title="复制方案">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                         </svg>
                     </button>
                     <button class="btn btn-icon btn-danger" id="btnDeleteScheme" title="删除方案">
@@ -283,6 +297,13 @@
                 <div class="form-group">
                     <label for="schemeName">方案名称</label>
                     <input type="text" id="schemeName" placeholder="输入方案名称">
+                </div>
+                <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="saveAsNew">
+                        <span class="checkmark"></span>
+                        保存为新方案（保留原方案）
+                    </label>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" id="btnCancelSave">取消</button>

@@ -79,6 +79,7 @@ const Store = (function() {
                 dueDate: tomorrow.toISOString().split('T')[0],
                 lineId: 'lineA',
                 startMinute: 480,
+                dayOffset: 0,
                 createdAt: Date.now()
             },
             {
@@ -89,6 +90,7 @@ const Store = (function() {
                 dueDate: tomorrow.toISOString().split('T')[0],
                 lineId: 'lineA',
                 startMinute: 600,
+                dayOffset: 0,
                 createdAt: Date.now()
             },
             {
@@ -99,6 +101,7 @@ const Store = (function() {
                 dueDate: dayAfter.toISOString().split('T')[0],
                 lineId: 'lineB',
                 startMinute: 480,
+                dayOffset: 0,
                 createdAt: Date.now()
             },
             {
@@ -109,6 +112,7 @@ const Store = (function() {
                 dueDate: yesterday.toISOString().split('T')[0],
                 lineId: 'lineC',
                 startMinute: 540,
+                dayOffset: 0,
                 createdAt: Date.now()
             },
             {
@@ -165,7 +169,12 @@ const Store = (function() {
     }
 
     function getOrdersByLine(lineId) {
-        return state.workOrders.filter(o => o.lineId === lineId).sort((a, b) => a.startMinute - b.startMinute);
+        return state.workOrders.filter(o => o.lineId === lineId).sort((a, b) => {
+            const dayA = a.dayOffset || 0;
+            const dayB = b.dayOffset || 0;
+            if (dayA !== dayB) return dayA - dayB;
+            return a.startMinute - b.startMinute;
+        });
     }
 
     function addWorkOrder(order) {
@@ -177,6 +186,7 @@ const Store = (function() {
             dueDate: order.dueDate,
             lineId: order.lineId || null,
             startMinute: order.startMinute || null,
+            dayOffset: order.lineId ? (order.dayOffset || 0) : null,
             createdAt: Date.now()
         };
         
@@ -248,6 +258,12 @@ const Store = (function() {
     function loadScheme(schemeId) {
         const scheme = state.schemes.find(s => s.id === schemeId);
         if (scheme) {
+            const current = state.schemes.find(s => s.id === state.currentSchemeId);
+            if (current) {
+                current.workOrders = Utils.deepClone(state.workOrders);
+                current.updatedAt = Date.now();
+            }
+            
             state.currentSchemeId = schemeId;
             state.workOrders = Utils.deepClone(scheme.workOrders);
             saveToStorage();
@@ -256,16 +272,29 @@ const Store = (function() {
         return false;
     }
 
-    function saveScheme(name) {
-        if (state.currentSchemeId) {
-            const scheme = state.schemes.find(s => s.id === state.currentSchemeId);
-            if (scheme) {
-                scheme.name = name;
-                scheme.workOrders = Utils.deepClone(state.workOrders);
-                scheme.updatedAt = Date.now();
-                saveToStorage();
-                return scheme;
-            }
+    function saveScheme(name, asNew = false) {
+        if (asNew || !state.currentSchemeId) {
+            const newScheme = {
+                id: Utils.generateUUID(),
+                name: name,
+                workOrders: Utils.deepClone(state.workOrders),
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+            };
+            
+            state.schemes.push(newScheme);
+            state.currentSchemeId = newScheme.id;
+            saveToStorage();
+            return newScheme;
+        }
+        
+        const scheme = state.schemes.find(s => s.id === state.currentSchemeId);
+        if (scheme) {
+            scheme.name = name;
+            scheme.workOrders = Utils.deepClone(state.workOrders);
+            scheme.updatedAt = Date.now();
+            saveToStorage();
+            return scheme;
         }
         
         const newScheme = {
@@ -278,6 +307,23 @@ const Store = (function() {
         
         state.schemes.push(newScheme);
         state.currentSchemeId = newScheme.id;
+        saveToStorage();
+        return newScheme;
+    }
+
+    function copyScheme(sourceSchemeId, newName) {
+        const sourceScheme = state.schemes.find(s => s.id === sourceSchemeId);
+        if (!sourceScheme) return null;
+        
+        const newScheme = {
+            id: Utils.generateUUID(),
+            name: newName,
+            workOrders: Utils.deepClone(sourceScheme.workOrders),
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        };
+        
+        state.schemes.push(newScheme);
         saveToStorage();
         return newScheme;
     }
@@ -298,13 +344,22 @@ const Store = (function() {
         return false;
     }
 
-    function hasConflict(orderId, lineId, startMinute, duration) {
-        const endMinute = startMinute + duration;
+    function hasConflict(orderId, lineId, startMinute, duration, dayOffset = 0) {
+        const WORK_START = 480;
+        const WORK_END = 1080;
+        const WORK_PER_DAY = WORK_END - WORK_START;
+        
+        const newStartAbsolute = dayOffset * WORK_PER_DAY + (startMinute - WORK_START);
+        const newEndAbsolute = newStartAbsolute + duration;
+        
         const lineOrders = getOrdersByLine(lineId).filter(o => o.id !== orderId);
         
         for (const order of lineOrders) {
-            const orderEnd = order.startMinute + order.stdMinutes;
-            if (startMinute < orderEnd && endMinute > order.startMinute) {
+            const orderDay = order.dayOffset || 0;
+            const orderStartAbsolute = orderDay * WORK_PER_DAY + (order.startMinute - WORK_START);
+            const orderEndAbsolute = orderStartAbsolute + order.stdMinutes;
+            
+            if (newStartAbsolute < orderEndAbsolute && newEndAbsolute > orderStartAbsolute) {
                 return true;
             }
         }
@@ -331,6 +386,7 @@ const Store = (function() {
         getCurrentScheme,
         loadScheme,
         saveScheme,
+        copyScheme,
         deleteScheme,
         hasConflict,
         saveToStorage

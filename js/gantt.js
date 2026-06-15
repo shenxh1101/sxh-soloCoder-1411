@@ -1,8 +1,16 @@
 const Gantt = (function() {
     const WORK_START_MINUTE = 480;
     const WORK_END_MINUTE = 1080;
-    const TOTAL_WORK_MINUTES = WORK_END_MINUTE - WORK_START_MINUTE;
+    const WORK_MINUTES_PER_DAY = WORK_END_MINUTE - WORK_START_MINUTE;
+    const MINUTES_PER_DAY = 1440;
     const SNAP_MINUTES = 15;
+    
+    const DISPLAY_DAYS = 3;
+    
+    let config = {
+        timeScale: 60,
+        displayDays: DISPLAY_DAYS
+    };
 
     let dragState = {
         isDragging: false,
@@ -11,8 +19,10 @@ const Gantt = (function() {
         startY: 0,
         originalLine: null,
         originalStart: null,
+        originalDay: null,
         currentLine: null,
         currentStart: null,
+        currentDay: null,
         element: null
     };
 
@@ -21,18 +31,91 @@ const Gantt = (function() {
         setupDragAndDrop();
     }
 
+    function getTimeScale() {
+        return config.timeScale;
+    }
+
+    function setTimeScale(minutes) {
+        config.timeScale = minutes;
+        renderTimeRuler();
+        render();
+    }
+
+    function getDisplayDays() {
+        return config.displayDays;
+    }
+
+    function getTotalDisplayMinutes() {
+        return config.displayDays * WORK_MINUTES_PER_DAY;
+    }
+
+    function minuteToAbsolute(minuteOfDay, dayOffset) {
+        return dayOffset * MINUTES_PER_DAY + minuteOfDay;
+    }
+
+    function absoluteToMinuteAndDay(absoluteMinute) {
+        const dayOffset = Math.floor(absoluteMinute / MINUTES_PER_DAY);
+        const minuteOfDay = absoluteMinute % MINUTES_PER_DAY;
+        return { minuteOfDay, dayOffset };
+    }
+
+    function getDisplayPosition(startMinute, dayOffset) {
+        const relativeMinutes = dayOffset * WORK_MINUTES_PER_DAY + (startMinute - WORK_START_MINUTE);
+        return (relativeMinutes / getTotalDisplayMinutes()) * 100;
+    }
+
+    function positionToAbsolute(percent, trackWidth, clientX, trackLeft) {
+        const relativeMinutes = (percent / 100) * getTotalDisplayMinutes();
+        const dayOffset = Math.floor(relativeMinutes / WORK_MINUTES_PER_DAY);
+        const minutesInDay = relativeMinutes % WORK_MINUTES_PER_DAY;
+        const startMinute = WORK_START_MINUTE + minutesInDay;
+        return { startMinute, dayOffset };
+    }
+
     function renderTimeRuler() {
         const ruler = document.getElementById('timeRuler');
         ruler.innerHTML = '';
         
-        const hours = 10;
-        for (let i = 0; i <= hours; i++) {
-            const marker = document.createElement('div');
-            marker.className = 'time-marker';
-            const hour = 8 + i;
-            marker.style.left = `${(i / hours) * 100}%`;
-            marker.textContent = `${hour.toString().padStart(2, '0')}:00`;
-            ruler.appendChild(marker);
+        const totalMinutes = getTotalDisplayMinutes();
+        const interval = config.timeScale;
+        
+        for (let day = 0; day < config.displayDays; day++) {
+            const dayStartPercent = (day * WORK_MINUTES_PER_DAY / totalMinutes) * 100;
+            const dayWidthPercent = (WORK_MINUTES_PER_DAY / totalMinutes) * 100;
+            
+            const dayLabel = document.createElement('div');
+            dayLabel.className = 'day-label';
+            dayLabel.style.left = `${dayStartPercent}%`;
+            dayLabel.style.width = `${dayWidthPercent}%`;
+            
+            const date = new Date();
+            date.setDate(date.getDate() + day);
+            const dayNames = ['今天', '明天', '后天'];
+            dayLabel.innerHTML = `
+                <div class="day-name">${dayNames[day] || `第${day + 1}天`}</div>
+                <div class="day-date">${date.getMonth() + 1}/${date.getDate()}</div>
+            `;
+            ruler.appendChild(dayLabel);
+            
+            const intervalsPerDay = Math.floor(WORK_MINUTES_PER_DAY / interval);
+            for (let i = 0; i <= intervalsPerDay; i++) {
+                const marker = document.createElement('div');
+                marker.className = 'time-marker';
+                
+                const minutesFromStart = day * WORK_MINUTES_PER_DAY + i * interval;
+                const percent = (minutesFromStart / totalMinutes) * 100;
+                marker.style.left = `${percent}%`;
+                
+                const hour = 8 + Math.floor(i * interval / 60);
+                const minute = (i * interval) % 60;
+                marker.textContent = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+                
+                if (minute === 0) {
+                    marker.classList.add('hour-marker');
+                }
+                
+                ruler.appendChild(marker);
+            }
         }
     }
 
@@ -68,16 +151,24 @@ const Gantt = (function() {
             bar.classList.add('overdue');
         }
         
-        const leftPercent = ((order.startMinute - WORK_START_MINUTE) / TOTAL_WORK_MINUTES) * 100;
-        const widthPercent = (order.stdMinutes / TOTAL_WORK_MINUTES) * 100;
+        const dayOffset = order.dayOffset || 0;
+        const leftPercent = getDisplayPosition(order.startMinute, dayOffset);
+        const widthPercent = (order.stdMinutes / getTotalDisplayMinutes()) * 100;
         
         bar.style.left = `${leftPercent}%`;
         bar.style.width = `${widthPercent}%`;
         
+        const endTime = order.startMinute + order.stdMinutes;
+        const spillsOver = endTime > WORK_END_MINUTE;
+        if (spillsOver) {
+            bar.classList.add('spills-over');
+        }
+        
         bar.innerHTML = `
             <div class="bar-content">
                 <div class="bar-model">${order.productModel}</div>
-                <div class="bar-time">${Utils.formatMinutes(order.startMinute)} - ${Utils.formatMinutes(order.startMinute + order.stdMinutes)}</div>
+                <div class="bar-time">${Utils.formatMinutes(order.startMinute)} - ${Utils.formatMinutes(Math.min(endTime, WORK_END_MINUTE))}</div>
+                ${dayOffset > 0 ? `<div class="bar-day">Day ${dayOffset + 1}</div>` : ''}
             </div>
             <div class="bar-delete" title="删除工单">×</div>
         `;
@@ -88,6 +179,12 @@ const Gantt = (function() {
                 Store.deleteWorkOrder(order.id);
                 render();
                 Utils.showToast('工单已删除', 'success');
+            }
+        });
+        
+        bar.addEventListener('click', (e) => {
+            if (!dragState.isDragging) {
+                App.openEditModal(order.id);
             }
         });
         
@@ -138,12 +235,8 @@ const Gantt = (function() {
             card.addEventListener('dragstart', handleUnscheduledDragStart);
             card.addEventListener('dragend', handleDragEnd);
             
-            card.addEventListener('dblclick', () => {
-                if (confirm(`确定删除工单 ${order.productModel} 吗？`)) {
-                    Store.deleteWorkOrder(order.id);
-                    render();
-                    Utils.showToast('工单已删除', 'success');
-                }
+            card.addEventListener('click', () => {
+                App.openEditModal(order.id);
             });
             
             list.appendChild(card);
@@ -221,18 +314,20 @@ const Gantt = (function() {
         const trackRect = e.currentTarget.getBoundingClientRect();
         const x = e.clientX - trackRect.left;
         const percent = x / trackRect.width;
-        let startMinute = WORK_START_MINUTE + percent * TOTAL_WORK_MINUTES;
-        startMinute = Utils.roundToNearest(startMinute, SNAP_MINUTES);
-        startMinute = Utils.clamp(startMinute, WORK_START_MINUTE, WORK_END_MINUTE - order.stdMinutes);
+        const { startMinute, dayOffset } = positionToAbsolute(percent, trackRect.width, e.clientX, trackRect.left);
         
-        if (Store.hasConflict(orderId, lineId, startMinute, order.stdMinutes)) {
+        let clampedStart = Utils.roundToNearest(startMinute, SNAP_MINUTES);
+        clampedStart = Utils.clamp(clampedStart, WORK_START_MINUTE, WORK_END_MINUTE - order.stdMinutes);
+        
+        if (Store.hasConflict(orderId, lineId, clampedStart, order.stdMinutes, dayOffset)) {
             Utils.showToast('时间冲突，无法放置', 'error');
             return;
         }
         
         Store.updateWorkOrder(orderId, {
             lineId: lineId,
-            startMinute: startMinute
+            startMinute: clampedStart,
+            dayOffset: dayOffset
         });
         
         render();
@@ -271,8 +366,10 @@ const Gantt = (function() {
                 startY: e.clientY,
                 originalLine: order.lineId,
                 originalStart: order.startMinute,
+                originalDay: order.dayOffset || 0,
                 currentLine: order.lineId,
                 currentStart: order.startMinute,
+                currentDay: order.dayOffset || 0,
                 element: bar,
                 trackWidth: trackRect.width,
                 trackRect: trackRect
@@ -280,7 +377,7 @@ const Gantt = (function() {
             
             bar.classList.add('dragging');
             
-            const minutesPerPixel = TOTAL_WORK_MINUTES / trackRect.width;
+            const minutesPerPixel = getTotalDisplayMinutes() / trackRect.width;
             dragState.minutesPerPixel = minutesPerPixel;
         });
     }
@@ -295,9 +392,13 @@ const Gantt = (function() {
         const deltaX = e.clientX - dragState.startX;
         const deltaMinutes = deltaX * dragState.minutesPerPixel;
         
-        let newStart = dragState.originalStart + deltaMinutes;
-        newStart = Utils.roundToNearest(newStart, SNAP_MINUTES);
-        newStart = Utils.clamp(newStart, WORK_START_MINUTE, WORK_END_MINUTE - order.stdMinutes);
+        const originalAbsolute = dragState.originalDay * WORK_MINUTES_PER_DAY + (dragState.originalStart - WORK_START_MINUTE);
+        let newAbsolute = originalAbsolute + deltaMinutes;
+        newAbsolute = Utils.roundToNearest(newAbsolute, SNAP_MINUTES);
+        newAbsolute = Utils.clamp(newAbsolute, 0, getTotalDisplayMinutes() - order.stdMinutes);
+        
+        const newDay = Math.floor(newAbsolute / WORK_MINUTES_PER_DAY);
+        const newStart = WORK_START_MINUTE + (newAbsolute % WORK_MINUTES_PER_DAY);
         
         const tracks = document.querySelectorAll('.gantt-track');
         let newLine = dragState.originalLine;
@@ -312,11 +413,12 @@ const Gantt = (function() {
         
         dragState.currentLine = newLine;
         dragState.currentStart = newStart;
+        dragState.currentDay = newDay;
         
-        const leftPercent = ((newStart - WORK_START_MINUTE) / TOTAL_WORK_MINUTES) * 100;
+        const leftPercent = (newAbsolute / getTotalDisplayMinutes()) * 100;
         bar.style.left = `${leftPercent}%`;
         
-        const hasConflict = Store.hasConflict(dragState.orderId, newLine, newStart, order.stdMinutes);
+        const hasConflict = Store.hasConflict(dragState.orderId, newLine, newStart, order.stdMinutes, newDay);
         if (hasConflict) {
             bar.classList.add('conflict');
         } else {
@@ -334,12 +436,19 @@ const Gantt = (function() {
             bar.classList.remove('dragging');
             bar.classList.remove('conflict');
             
-            const hasConflict = Store.hasConflict(dragState.orderId, dragState.currentLine, dragState.currentStart, order.stdMinutes);
+            const hasConflict = Store.hasConflict(
+                dragState.orderId, 
+                dragState.currentLine, 
+                dragState.currentStart, 
+                order.stdMinutes,
+                dragState.currentDay
+            );
             
             if (!hasConflict) {
                 Store.updateWorkOrder(dragState.orderId, {
                     lineId: dragState.currentLine,
-                    startMinute: dragState.currentStart
+                    startMinute: dragState.currentStart,
+                    dayOffset: dragState.currentDay
                 });
             } else {
                 Utils.showToast('时间冲突，已恢复原位', 'warning');
@@ -370,6 +479,10 @@ const Gantt = (function() {
         render,
         getSnapMinutes,
         getWorkStartTime,
-        getWorkEndTime
+        getWorkEndTime,
+        getTimeScale,
+        setTimeScale,
+        getDisplayDays,
+        getTotalDisplayMinutes
     };
 })();

@@ -6,10 +6,12 @@ const ExportModule = (function() {
         const lineNames = {};
         lines.forEach(l => lineNames[l.id] = l.name);
         
-        const headers = ['工单编号', '产品型号', '数量', '标准工时(分钟)', '交货日期', '分配产线', '开始时间', '结束时间', '状态'];
+        const headers = ['工单编号', '产品型号', '数量', '标准工时(分钟)', '交货日期', '分配产线', '排程天数', '开始时间', '结束时间', '状态'];
         
         const rows = orders.map((order, index) => {
             const lineName = order.lineId ? lineNames[order.lineId] : '待排程';
+            const dayOffset = order.dayOffset || 0;
+            const dayLabel = order.lineId ? (dayOffset === 0 ? '今天' : `第${dayOffset + 1}天`) : '-';
             const startTime = order.startMinute !== null ? Utils.formatMinutes(order.startMinute) : '-';
             const endTime = order.startMinute !== null ? Utils.formatMinutes(order.startMinute + order.stdMinutes) : '-';
             const status = Utils.isOverdue(order.dueDate) ? '逾期' : (order.lineId ? '已排程' : '待排程');
@@ -21,6 +23,7 @@ const ExportModule = (function() {
                 order.stdMinutes,
                 order.dueDate,
                 lineName,
+                dayLabel,
                 startTime,
                 endTime,
                 status

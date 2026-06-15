@@ -1,6 +1,9 @@
 const Scheduler = (function() {
     const WORK_START_MINUTE = 480;
     const WORK_END_MINUTE = 1080;
+    const WORK_MINUTES_PER_DAY = WORK_END_MINUTE - WORK_START_MINUTE;
+    const MAX_DAYS = 3;
+    const SNAP_MINUTES = 15;
 
     function autoSchedule(algorithm = 'edd') {
         const unscheduled = Store.getUnscheduledOrders();
@@ -18,11 +21,16 @@ const Scheduler = (function() {
             if (result) {
                 Store.updateWorkOrder(order.id, {
                     lineId: result.lineId,
-                    startMinute: result.startMinute
+                    startMinute: result.startMinute,
+                    dayOffset: result.dayOffset
                 });
                 scheduledCount++;
             }
         });
+        
+        if (scheduledCount === 0) {
+            Utils.showToast('没有足够的时间排程所有工单', 'warning');
+        }
         
         return scheduledCount;
     }
@@ -58,12 +66,13 @@ const Scheduler = (function() {
         lines.forEach(line => {
             const slot = findEarliestSlot(order, line.id);
             if (slot !== null) {
-                const endTime = slot + order.stdMinutes;
-                if (endTime < earliestEnd) {
-                    earliestEnd = endTime;
+                const endAbsolute = slot.dayOffset * WORK_MINUTES_PER_DAY + (slot.startMinute - WORK_START_MINUTE) + order.stdMinutes;
+                if (endAbsolute < earliestEnd) {
+                    earliestEnd = endAbsolute;
                     bestSlot = {
                         lineId: line.id,
-                        startMinute: slot
+                        startMinute: slot.startMinute,
+                        dayOffset: slot.dayOffset
                     };
                 }
             }
@@ -79,25 +88,41 @@ const Scheduler = (function() {
         const lineOrders = Store.getOrdersByLine(lineId).filter(o => o.id !== order.id);
         
         if (lineOrders.length === 0) {
-            return line.workStartTime;
+            return { startMinute: line.workStartTime, dayOffset: 0 };
         }
         
-        let candidateStart = line.workStartTime;
+        const occupiedSlots = [];
+        lineOrders.forEach(existing => {
+            const dayOffset = existing.dayOffset || 0;
+            const startAbsolute = dayOffset * WORK_MINUTES_PER_DAY + (existing.startMinute - WORK_START_MINUTE);
+            const endAbsolute = startAbsolute + existing.stdMinutes;
+            occupiedSlots.push({ start: startAbsolute, end: endAbsolute });
+        });
         
-        lineOrders.sort((a, b) => a.startMinute - b.startMinute);
+        occupiedSlots.sort((a, b) => a.start - b.start);
         
-        for (const existing of lineOrders) {
-            const existingEnd = existing.startMinute + existing.stdMinutes;
+        const orderDuration = order.stdMinutes;
+        
+        for (let day = 0; day < MAX_DAYS; day++) {
+            const dayStartAbsolute = day * WORK_MINUTES_PER_DAY;
+            const dayEndAbsolute = dayStartAbsolute + WORK_MINUTES_PER_DAY;
             
-            if (candidateStart + order.stdMinutes <= existing.startMinute) {
-                return candidateStart;
+            let candidateStart = dayStartAbsolute;
+            
+            const daySlots = occupiedSlots.filter(s => s.end > dayStartAbsolute && s.start < dayEndAbsolute);
+            
+            for (const slot of daySlots) {
+                if (candidateStart + orderDuration <= slot.start) {
+                    const candidateMinute = WORK_START_MINUTE + (candidateStart % WORK_MINUTES_PER_DAY);
+                    return { startMinute: Utils.roundToNearest(candidateMinute, SNAP_MINUTES), dayOffset: day };
+                }
+                candidateStart = Math.max(candidateStart, slot.end);
             }
             
-            candidateStart = Math.max(candidateStart, existingEnd);
-        }
-        
-        if (candidateStart + order.stdMinutes <= line.workEndTime) {
-            return candidateStart;
+            if (candidateStart + orderDuration <= dayEndAbsolute) {
+                const candidateMinute = WORK_START_MINUTE + (candidateStart % WORK_MINUTES_PER_DAY);
+                return { startMinute: Utils.roundToNearest(candidateMinute, SNAP_MINUTES), dayOffset: day };
+            }
         }
         
         return null;
@@ -123,7 +148,7 @@ const Scheduler = (function() {
             lines.forEach(line => {
                 const slot = findEarliestSlot(order, line.id);
                 if (slot !== null) {
-                    const newLoad = lineLoads[line.id] + (order.stdMinutes / (line.workEndTime - line.workStartTime) * 100);
+                    const newLoad = lineLoads[line.id] + (order.stdMinutes / WORK_MINUTES_PER_DAY * 100);
                     if (newLoad < minLoad) {
                         minLoad = newLoad;
                         minLoadLine = line.id;
@@ -137,11 +162,12 @@ const Scheduler = (function() {
                     const oldLine = order.lineId;
                     Store.updateWorkOrder(order.id, {
                         lineId: minLoadLine,
-                        startMinute: slot
+                        startMinute: slot.startMinute,
+                        dayOffset: slot.dayOffset
                     });
                     
-                    lineLoads[oldLine] -= (order.stdMinutes / (lines.find(l => l.id === oldLine).workEndTime - lines.find(l => l.id === oldLine).workStartTime) * 100);
-                    lineLoads[minLoadLine] += (order.stdMinutes / (lines.find(l => l.id === minLoadLine).workEndTime - lines.find(l => l.id === minLoadLine).workStartTime) * 100);
+                    lineLoads[oldLine] -= (order.stdMinutes / WORK_MINUTES_PER_DAY * 100);
+                    lineLoads[minLoadLine] += (order.stdMinutes / WORK_MINUTES_PER_DAY * 100);
                 }
             }
         });
@@ -153,7 +179,8 @@ const Scheduler = (function() {
         allOrders.forEach(order => {
             Store.updateWorkOrder(order.id, {
                 lineId: null,
-                startMinute: null
+                startMinute: null,
+                dayOffset: null
             });
         });
         
