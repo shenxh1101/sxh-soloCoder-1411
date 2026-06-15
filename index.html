@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>车间生产工单排程看板</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <header class="top-header">
+            <div class="brand">
+                <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="7" rx="1"/>
+                    <rect x="14" y="3" width="7" height="7" rx="1"/>
+                    <rect x="3" y="14" width="7" height="7" rx="1"/>
+                    <rect x="14" y="14" width="7" height="7" rx="1"/>
+                </svg>
+                <div class="brand-text">
+                    <h1 class="brand-title">生产工单排程看板</h1>
+                    <span class="brand-subtitle">Work Order Scheduling Board</span>
+                </div>
+            </div>
+            
+            <div class="toolbar">
+                <button class="btn btn-primary" id="btnAddOrder">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"/>
+                        <line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    添加工单
+                </button>
+                
+                <div class="btn-group">
+                    <button class="btn btn-secondary" id="btnAutoSchedule">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"/>
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                        </svg>
+                        自动排程
+                    </button>
+                    <select class="select-inline" id="schedulerAlgo">
+                        <option value="edd">最早交货优先</option>
+                        <option value="spt">最短工时优先</option>
+                    </select>
+                </div>
+                
+                <div class="btn-group">
+                    <button class="btn btn-secondary" id="btnExportCsv">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        导出CSV
+                    </button>
+                    <button class="btn btn-secondary" id="btnExportPdf">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                            <polyline points="10 9 9 9 8 9"/>
+                        </svg>
+                        打印PDF
+                    </button>
+                </div>
+                
+                <div class="scheme-manager">
+                    <select class="select-inline" id="schemeSelect">
+                        <option value="">-- 选择方案 --</option>
+                    </select>
+                    <button class="btn btn-icon" id="btnSaveScheme" title="保存方案">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                            <polyline points="17 21 17 13 7 13 7 21"/>
+                            <polyline points="7 3 7 8 15 8"/>
+                        </svg>
+                    </button>
+                    <button class="btn btn-icon btn-danger" id="btnDeleteScheme" title="删除方案">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <aside class="sidebar">
+                <div class="stats-panel">
+                    <h3 class="panel-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="20" x2="18" y2="10"/>
+                            <line x1="12" y1="20" x2="12" y2="4"/>
+                            <line x1="6" y1="20" x2="6" y2="14"/>
+                        </svg>
+                        统计概览
+                    </h3>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <span class="stat-value" id="totalOrders">0</span>
+                            <span class="stat-label">总工单数</span>
+                        </div>
+                        <div class="stat-card stat-danger">
+                            <span class="stat-value" id="overdueOrders">0</span>
+                            <span class="stat-label">逾期工单</span>
+                        </div>
+                        <div class="stat-card stat-info">
+                            <span class="stat-value" id="avgLoad">0%</span>
+                            <span class="stat-label">平均负载</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="load-panel">
+                    <h3 class="panel-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
+                            <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+                        </svg>
+                        产线负载
+                    </h3>
+                    <div class="load-list">
+                        <div class="load-item" data-line="lineA">
+                            <div class="load-header">
+                                <span class="line-dot line-a"></span>
+                                <span class="line-name">A线</span>
+                                <span class="load-percent" id="loadLineA">0%</span>
+                            </div>
+                            <div class="load-bar">
+                                <div class="load-fill" id="loadFillA" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="load-item" data-line="lineB">
+                            <div class="load-header">
+                                <span class="line-dot line-b"></span>
+                                <span class="line-name">B线</span>
+                                <span class="load-percent" id="loadLineB">0%</span>
+                            </div>
+                            <div class="load-bar">
+                                <div class="load-fill" id="loadFillB" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="load-item" data-line="lineC">
+                            <div class="load-header">
+                                <span class="line-dot line-c"></span>
+                                <span class="line-name">C线</span>
+                                <span class="load-percent" id="loadLineC">0%</span>
+                            </div>
+                            <div class="load-bar">
+                                <div class="load-fill" id="loadFillC" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="unscheduled-panel">
+                    <h3 class="panel-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                            <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                            <line x1="12" y1="22.08" x2="12" y2="12"/>
+                        </svg>
+                        待排程工单
+                        <span class="badge" id="unscheduledCount">0</span>
+                    </h3>
+                    <div class="unscheduled-list" id="unscheduledList">
+                        <div class="empty-state">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                <line x1="16" y1="2" x2="16" y2="6"/>
+                                <line x1="8" y1="2" x2="8" y2="6"/>
+                                <line x1="3" y1="10" x2="21" y2="10"/>
+                            </svg>
+                            <span>暂无待排程工单</span>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <main class="gantt-container">
+                <div class="gantt-wrapper">
+                    <div class="gantt-header">
+                        <div class="gantt-label-col">
+                            <span>产线</span>
+                        </div>
+                        <div class="gantt-time-col" id="timeRuler">
+                        </div>
+                    </div>
+                    
+                    <div class="gantt-body">
+                        <div class="gantt-line" data-line="lineA">
+                            <div class="gantt-label">
+                                <span class="line-dot line-a"></span>
+                                <span class="line-label-text">A线</span>
+                            </div>
+                            <div class="gantt-track" data-line="lineA" id="trackA">
+                            </div>
+                        </div>
+                        
+                        <div class="gantt-line" data-line="lineB">
+                            <div class="gantt-label">
+                                <span class="line-dot line-b"></span>
+                                <span class="line-label-text">B线</span>
+                            </div>
+                            <div class="gantt-track" data-line="lineB" id="trackB">
+                            </div>
+                        </div>
+                        
+                        <div class="gantt-line" data-line="lineC">
+                            <div class="gantt-label">
+                                <span class="line-dot line-c"></span>
+                                <span class="line-label-text">C线</span>
+                            </div>
+                            <div class="gantt-track" data-line="lineC" id="trackC">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="orderModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="modalTitle">添加新工单</h2>
+                <button class="modal-close" id="modalClose">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <form class="modal-body" id="orderForm">
+                <input type="hidden" id="orderId">
+                <div class="form-group">
+                    <label for="productModel">产品型号 *</label>
+                    <input type="text" id="productModel" placeholder="例如：XJ-2024-001" required>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="quantity">数量 *</label>
+                        <input type="number" id="quantity" min="1" value="1" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="stdMinutes">标准工时(分钟) *</label>
+                        <input type="number" id="stdMinutes" min="1" value="60" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="dueDate">交货日期 *</label>
+                    <input type="date" id="dueDate" required>
+                </div>
+                <div class="form-group">
+                    <label for="lineSelect">分配产线</label>
+                    <select id="lineSelect">
+                        <option value="">待排程</option>
+                        <option value="lineA">A线</option>
+                        <option value="lineB">B线</option>
+                        <option value="lineC">C线</option>
+                    </select>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" id="btnCancel">取消</button>
+                    <button type="submit" class="btn btn-primary">确认添加</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="saveSchemeModal">
+        <div class="modal modal-sm">
+            <div class="modal-header">
+                <h2>保存排程方案</h2>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="schemeName">方案名称</label>
+                    <input type="text" id="schemeName" placeholder="输入方案名称">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" id="btnCancelSave">取消</button>
+                    <button type="button" class="btn btn-primary" id="btnConfirmSave">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="js/utils.js"></script>
+    <script src="js/store.js"></script>
+    <script src="js/gantt.js"></script>
+    <script src="js/scheduler.js"></script>
+    <script src="js/export.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
