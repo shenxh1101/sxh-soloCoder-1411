@@ -1,21 +1,8 @@
 const Scheduler = (function() {
-    let WORK_START_MINUTE = 480;
-    let WORK_END_MINUTE = 1080;
-    let WORK_MINUTES_PER_DAY = WORK_END_MINUTE - WORK_START_MINUTE;
     const MAX_DAYS = 14;
     const SNAP_MINUTES = 15;
 
-    function updateCalendarSettings() {
-        const calendar = Store.getCalendar();
-        if (calendar) {
-            WORK_START_MINUTE = calendar.workStartTime;
-            WORK_END_MINUTE = calendar.workEndTime;
-            WORK_MINUTES_PER_DAY = WORK_END_MINUTE - WORK_START_MINUTE;
-        }
-    }
-
     function autoSchedule(algorithm = 'edd') {
-        updateCalendarSettings();
         const unscheduled = Store.getUnscheduledOrders();
         
         if (unscheduled.length === 0) {
@@ -45,6 +32,14 @@ const Scheduler = (function() {
                 scheduledCount++;
             }
         });
+        
+        if (scheduledCount > 0) {
+            Store.addAuditLog(Store.AUDIT_ACTION_TYPES.AUTO_SCHEDULE, {
+                algorithm: algorithm,
+                scheduledCount: scheduledCount,
+                totalOrders: unscheduled.length
+            });
+        }
         
         if (scheduledCount === 0) {
             Utils.showToast('没有足够的时间排程所有工单', 'warning');
@@ -77,7 +72,6 @@ const Scheduler = (function() {
     }
 
     function findBestSlot(order) {
-        updateCalendarSettings();
         const lines = Store.getLines();
         let bestSlot = null;
         let earliestEnd = Infinity;
@@ -87,8 +81,8 @@ const Scheduler = (function() {
             if (slot !== null) {
                 const segments = Store.splitOrderForMultiDay(order, line.id, slot.startMinute, slot.dayOffset);
                 const lastSegment = segments[segments.length - 1];
-                const endAbsolute = lastSegment.dayOffset * WORK_MINUTES_PER_DAY + 
-                                   (lastSegment.endMinute - WORK_START_MINUTE);
+                const endDate = Store.getWorkDayOffset(new Date(), lastSegment.dayOffset);
+                const endAbsolute = (lastSegment.dayOffset * 24 * 60) + lastSegment.endMinute;
                 
                 if (endAbsolute < earliestEnd) {
                     earliestEnd = endAbsolute;
@@ -105,120 +99,30 @@ const Scheduler = (function() {
     }
 
     function findEarliestSlot(order, lineId) {
-        updateCalendarSettings();
         const line = Store.getLineById(lineId);
         if (!line) return null;
         
-        const lineOrders = Store.getOrdersByLine(lineId).filter(o => o.id !== order.id);
+        const lineOrders = Store.getOrdersByLine(lineId, true).filter(o => o.id !== order.id);
         
         if (lineOrders.length === 0) {
-            const firstWorkDay = findNextWorkDay(0);
-            return { startMinute: line.workStartTime, dayOffset: firstWorkDay };
+            const firstAvailable = findFirstAvailableSlot(lineId, 0, Store.getWorkStartTime());
+            return firstAvailable;
         }
         
-        const occupiedSlots = [];
-        lineOrders.forEach(existing => {
-            const segments = existing.segments || [{
-                dayOffset: existing.dayOffset || 0,
-                startMinute: existing.startMinute,
-                duration: existing.stdMinutes,
-                endMinute: existing.startMinute + existing.stdMinutes
-            }];
-            
-            segments.forEach(seg => {
-                const startAbsolute = seg.dayOffset * WORK_MINUTES_PER_DAY + 
-                                    (seg.startMinute - WORK_START_MINUTE);
-                const endAbsolute = startAbsolute + seg.duration;
-                occupiedSlots.push({ start: startAbsolute, end: endAbsolute });
-            });
-        });
-        
+        const occupiedSlots = buildOccupiedSlots(lineOrders);
         occupiedSlots.sort((a, b) => a.start - b.start);
         
-        const orderDuration = Math.min(order.stdMinutes, WORK_MINUTES_PER_DAY);
+        const workStart = Store.getWorkStartTime();
+        const workEnd = Store.getWorkEndTime();
+        const availablePerDay = Store.getAvailableMinutesPerDay();
+        const checkDuration = Math.min(order.stdMinutes, availablePerDay);
         
         for (let dayOffset = 0; dayOffset < MAX_DAYS; dayOffset++) {
-            if (!isValidWorkDay(dayOffset)) continue;
+            const date = Store.getWorkDayOffset(new Date(), dayOffset);
+            if (!Store.isWorkDay(date) || Store.isDowntime(date)) continue;
             
-            const dayStartAbsolute = dayOffset * WORK_MINUTES_PER_DAY;
-            const dayEndAbsolute = dayStartAbsolute + WORK_MINUTES_PER_DAY;
-            
-            let candidateStart = dayStartAbsolute;
-            
-            const daySlots = occupiedSlots.filter(s => 
-                s.end > dayStartAbsolute && s.start < dayEndAbsolute
-            );
-            
-            for (const slot of daySlots) {
-                if (candidateStart + orderDuration <= slot.start) {
-                    const candidateMinute = WORK_START_MINUTE + (candidateStart % WORK_MINUTES_PER_DAY);
-                    return { 
-                        startMinute: Utils.roundToNearest(candidateMinute, SNAP_MINUTES), 
-                        dayOffset: dayOffset 
-                    };
-                }
-                candidateStart = Math.max(candidateStart, slot.end);
-            }
-            
-            if (candidateStart + orderDuration <= dayEndAbsolute) {
-                const candidateMinute = WORK_START_MINUTE + (candidateStart % WORK_MINUTES_PER_DAY);
-                return { 
-                    startMinute: Utils.roundToNearest(candidateMinute, SNAP_MINUTES), 
-                    dayOffset: dayOffset 
-                };
-            }
-        }
-        
-        return null;
-    }
-
-    function findNextWorkDay(fromDayOffset) {
-        for (let i = fromDayOffset; i < MAX_DAYS; i++) {
-            if (isValidWorkDay(i)) {
-                return i;
-            }
-        }
-        return fromDayOffset;
-    }
-
-    function isValidWorkDay(dayOffset) {
-        const date = Store.getWorkDayOffset(new Date(), dayOffset);
-        return Store.isWorkDay(date) && !Store.isDowntime(date);
-    }
-
-    function findNextAvailableSlot(lineId, duration, excludeOrderId = null) {
-        updateCalendarSettings();
-        let lineOrders = Store.getOrdersByLine(lineId);
-        if (excludeOrderId) {
-            lineOrders = lineOrders.filter(o => o.id !== excludeOrderId);
-        }
-        
-        const occupiedSlots = [];
-        lineOrders.forEach(existing => {
-            const segments = existing.segments || [{
-                dayOffset: existing.dayOffset || 0,
-                startMinute: existing.startMinute,
-                duration: existing.stdMinutes,
-                endMinute: existing.startMinute + existing.stdMinutes
-            }];
-            
-            segments.forEach(seg => {
-                const startAbsolute = seg.dayOffset * WORK_MINUTES_PER_DAY + 
-                                    (seg.startMinute - WORK_START_MINUTE);
-                const endAbsolute = startAbsolute + seg.duration;
-                occupiedSlots.push({ start: startAbsolute, end: endAbsolute });
-            });
-        });
-        
-        occupiedSlots.sort((a, b) => a.start - b.start);
-        
-        const checkDuration = Math.min(duration, WORK_MINUTES_PER_DAY);
-        
-        for (let dayOffset = 0; dayOffset < MAX_DAYS; dayOffset++) {
-            if (!isValidWorkDay(dayOffset)) continue;
-            
-            const dayStartAbsolute = dayOffset * WORK_MINUTES_PER_DAY;
-            const dayEndAbsolute = dayStartAbsolute + WORK_MINUTES_PER_DAY;
+            const dayStartAbsolute = dayOffset * 24 * 60 + workStart;
+            const dayEndAbsolute = dayOffset * 24 * 60 + workEnd;
             
             let candidateStart = dayStartAbsolute;
             
@@ -228,21 +132,143 @@ const Scheduler = (function() {
             
             for (const slot of daySlots) {
                 if (candidateStart + checkDuration <= slot.start) {
-                    const candidateMinute = WORK_START_MINUTE + (candidateStart % WORK_MINUTES_PER_DAY);
-                    return { 
-                        startMinute: Utils.roundToNearest(candidateMinute, SNAP_MINUTES), 
-                        dayOffset: dayOffset 
-                    };
+                    const candidateMinute = candidateStart % (24 * 60);
+                    const candidateDate = Store.getWorkDayOffset(new Date(), Math.floor(candidateStart / (24 * 60)));
+                    
+                    if (Store.isAvailableProductionTime(candidateDate, candidateMinute)) {
+                        const snapped = Utils.roundToNearest(candidateMinute, SNAP_MINUTES);
+                        const snappedDay = Math.floor(candidateStart / (24 * 60));
+                        return { startMinute: snapped, dayOffset: snappedDay };
+                    } else {
+                        const nextAvail = Store.findNextAvailableMinute(candidateDate, candidateMinute, 1);
+                        if (nextAvail) {
+                            return { startMinute: nextAvail.minute, dayOffset: nextAvail.dayOffset };
+                        }
+                    }
                 }
                 candidateStart = Math.max(candidateStart, slot.end);
             }
             
             if (candidateStart + checkDuration <= dayEndAbsolute) {
-                const candidateMinute = WORK_START_MINUTE + (candidateStart % WORK_MINUTES_PER_DAY);
-                return { 
-                    startMinute: Utils.roundToNearest(candidateMinute, SNAP_MINUTES), 
-                    dayOffset: dayOffset 
-                };
+                const candidateMinute = candidateStart % (24 * 60);
+                const candidateDate = Store.getWorkDayOffset(new Date(), Math.floor(candidateStart / (24 * 60)));
+                
+                if (Store.isAvailableProductionTime(candidateDate, candidateMinute)) {
+                    const snapped = Utils.roundToNearest(candidateMinute, SNAP_MINUTES);
+                    const snappedDay = Math.floor(candidateStart / (24 * 60));
+                    return { startMinute: snapped, dayOffset: snappedDay };
+                } else {
+                    const nextAvail = Store.findNextAvailableMinute(candidateDate, candidateMinute, 1);
+                    if (nextAvail && nextAvail.dayOffset < MAX_DAYS) {
+                        return { startMinute: nextAvail.minute, dayOffset: nextAvail.dayOffset };
+                    }
+                }
+            }
+        }
+        
+        return null;
+    }
+
+    function buildOccupiedSlots(lineOrders) {
+        const slots = [];
+        lineOrders.forEach(existing => {
+            const segments = existing.segments || [{
+                dayOffset: existing.dayOffset || 0,
+                startMinute: existing.startMinute,
+                duration: existing.stdMinutes,
+                endMinute: existing.startMinute + existing.stdMinutes
+            }];
+            
+            segments.forEach(seg => {
+                const startAbsolute = seg.dayOffset * 24 * 60 + seg.startMinute;
+                const endAbsolute = startAbsolute + seg.duration;
+                slots.push({ start: startAbsolute, end: endAbsolute });
+            });
+        });
+        return slots;
+    }
+
+    function findFirstAvailableSlot(lineId, fromDayOffset, fromMinute) {
+        const workStart = Store.getWorkStartTime();
+        let dayOffset = fromDayOffset;
+        let minute = fromMinute;
+        
+        while (dayOffset < MAX_DAYS) {
+            const date = Store.getWorkDayOffset(new Date(), dayOffset);
+            const result = Store.findNextAvailableMinute(date, minute, 1);
+            if (result) {
+                return { startMinute: result.minute, dayOffset: result.dayOffset };
+            }
+            dayOffset++;
+            minute = workStart;
+        }
+        return { startMinute: workStart, dayOffset: 0 };
+    }
+
+    function findNextAvailableSlot(lineId, duration, excludeOrderId = null) {
+        let lineOrders = Store.getOrdersByLine(lineId, true);
+        if (excludeOrderId) {
+            lineOrders = lineOrders.filter(o => o.id !== excludeOrderId);
+        }
+        
+        if (lineOrders.length === 0) {
+            return findFirstAvailableSlot(lineId, 0, Store.getWorkStartTime());
+        }
+        
+        const occupiedSlots = buildOccupiedSlots(lineOrders);
+        occupiedSlots.sort((a, b) => a.start - b.start);
+        
+        const workStart = Store.getWorkStartTime();
+        const workEnd = Store.getWorkEndTime();
+        const availablePerDay = Store.getAvailableMinutesPerDay();
+        const checkDuration = Math.min(duration, availablePerDay);
+        
+        for (let dayOffset = 0; dayOffset < MAX_DAYS; dayOffset++) {
+            const date = Store.getWorkDayOffset(new Date(), dayOffset);
+            if (!Store.isWorkDay(date) || Store.isDowntime(date)) continue;
+            
+            const dayStartAbsolute = dayOffset * 24 * 60 + workStart;
+            const dayEndAbsolute = dayOffset * 24 * 60 + workEnd;
+            
+            let candidateStart = dayStartAbsolute;
+            
+            const daySlots = occupiedSlots.filter(s => 
+                s.end > dayStartAbsolute && s.start < dayEndAbsolute
+            );
+            
+            for (const slot of daySlots) {
+                if (candidateStart + checkDuration <= slot.start) {
+                    const candidateMinute = candidateStart % (24 * 60);
+                    const candidateDate = Store.getWorkDayOffset(new Date(), Math.floor(candidateStart / (24 * 60)));
+                    
+                    if (Store.isAvailableProductionTime(candidateDate, candidateMinute)) {
+                        const snapped = Utils.roundToNearest(candidateMinute, SNAP_MINUTES);
+                        const snappedDay = Math.floor(candidateStart / (24 * 60));
+                        return { startMinute: snapped, dayOffset: snappedDay };
+                    } else {
+                        const nextAvail = Store.findNextAvailableMinute(candidateDate, candidateMinute, 1);
+                        if (nextAvail) {
+                            return { startMinute: nextAvail.minute, dayOffset: nextAvail.dayOffset };
+                        }
+                    }
+                }
+                candidateStart = Math.max(candidateStart, slot.end);
+            }
+            
+            if (candidateStart + checkDuration <= dayEndAbsolute) {
+                const candidateMinute = candidateStart % (24 * 60);
+                const candidateDate = Store.getWorkDayOffset(new Date(), Math.floor(candidateStart / (24 * 60)));
+                
+                if (Store.isAvailableProductionTime(candidateDate, candidateMinute)) {
+                    const snapped = Utils.roundToNearest(candidateMinute, SNAP_MINUTES);
+                    const snappedDay = Math.floor(candidateStart / (24 * 60));
+                    return { startMinute: snapped, dayOffset: snappedDay };
+                } else {
+                    const nextAvail = Store.findNextAvailableMinute(candidateDate, candidateMinute, 1);
+                    if (nextAvail && nextAvail.dayOffset < MAX_DAYS) {
+                        return { startMinute: nextAvail.minute, dayOffset: nextAvail.dayOffset };
+                    }
+                }
             }
         }
         
@@ -250,7 +276,6 @@ const Scheduler = (function() {
     }
 
     function balanceLoad() {
-        updateCalendarSettings();
         const lines = Store.getLines();
         const allScheduled = Store.getScheduledOrders();
         
@@ -270,7 +295,8 @@ const Scheduler = (function() {
             lines.forEach(line => {
                 const slot = findEarliestSlot(order, line.id);
                 if (slot !== null) {
-                    const newLoad = lineLoads[line.id] + (order.stdMinutes / WORK_MINUTES_PER_DAY * 100);
+                    const availablePerDay = Store.getAvailableMinutesPerDay();
+                    const newLoad = lineLoads[line.id] + (order.stdMinutes / availablePerDay * 100);
                     if (newLoad < minLoad) {
                         minLoad = newLoad;
                         minLoadLine = line.id;
@@ -291,8 +317,9 @@ const Scheduler = (function() {
                         segments: segments.length > 1 ? segments : null
                     });
                     
-                    lineLoads[oldLine] -= (order.stdMinutes / WORK_MINUTES_PER_DAY * 100);
-                    lineLoads[minLoadLine] += (order.stdMinutes / WORK_MINUTES_PER_DAY * 100);
+                    const availablePerDay = Store.getAvailableMinutesPerDay();
+                    lineLoads[oldLine] -= (order.stdMinutes / availablePerDay * 100);
+                    lineLoads[minLoadLine] += (order.stdMinutes / availablePerDay * 100);
                 }
             }
         });
@@ -317,6 +344,9 @@ const Scheduler = (function() {
         const count = autoSchedule(algorithm);
         
         return count;
+    }
+
+    function updateCalendarSettings() {
     }
 
     return {

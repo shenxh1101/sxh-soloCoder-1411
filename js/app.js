@@ -1,6 +1,7 @@
 const App = (function() {
     let currentCompareTab = 'moved';
     let currentCompareSchemeId = null;
+    let compareShowChangedOnly = false;
     let editingOrderId = null;
 
     function init() {
@@ -10,6 +11,7 @@ const App = (function() {
         setupEventListeners();
         updateSchemeSelect();
         updateStatusStats();
+        updateExecutionStats();
         Gantt.render();
         
         const dueDateInput = document.getElementById('dueDate');
@@ -56,6 +58,15 @@ const App = (function() {
         });
         document.getElementById('btnAddDowntime').addEventListener('click', openDowntimeModal);
         
+        document.getElementById('shiftTypeSelect').addEventListener('change', handleShiftTypeChange);
+        document.getElementById('btnAddBreak').addEventListener('click', openBreakModal);
+        
+        document.getElementById('btnCancelBreak').addEventListener('click', closeBreakModal);
+        document.getElementById('btnConfirmBreak').addEventListener('click', handleConfirmBreak);
+        document.getElementById('breakModal').addEventListener('click', (e) => {
+            if (e.target.id === 'breakModal') closeBreakModal();
+        });
+        
         document.getElementById('btnCancelDowntime').addEventListener('click', closeDowntimeModal);
         document.getElementById('btnConfirmDowntime').addEventListener('click', handleConfirmDowntime);
         document.getElementById('downtimeModal').addEventListener('click', (e) => {
@@ -69,6 +80,7 @@ const App = (function() {
         });
         document.getElementById('compareSchemeSelect').addEventListener('change', handleCompareSchemeChange);
         document.getElementById('btnSwitchToCompare').addEventListener('click', handleSwitchToCompare);
+        document.getElementById('chkShowChangedOnly').addEventListener('change', handleShowChangedOnly);
         
         document.querySelectorAll('.compare-tab').forEach(tab => {
             tab.addEventListener('click', (e) => {
@@ -81,6 +93,32 @@ const App = (function() {
         
         document.getElementById('timeScaleSelect').addEventListener('change', handleTimeScaleChange);
         
+        document.getElementById('chkShowHistorical').addEventListener('change', (e) => {
+            Gantt.setShowHistorical(e.target.checked);
+            Gantt.render();
+        });
+        
+        document.getElementById('btnAuditLog').addEventListener('click', openAuditLogModal);
+        document.getElementById('auditLogModalClose').addEventListener('click', closeAuditLogModal);
+        document.getElementById('btnCloseAuditLog').addEventListener('click', closeAuditLogModal);
+        document.getElementById('auditLogModal').addEventListener('click', (e) => {
+            if (e.target.id === 'auditLogModal') closeAuditLogModal();
+        });
+        document.getElementById('auditActionFilter').addEventListener('change', renderAuditLogList);
+        
+        document.getElementById('btnCloseExecution').addEventListener('click', closeExecutionModal);
+        document.getElementById('executionModalClose').addEventListener('click', closeExecutionModal);
+        document.getElementById('executionModal').addEventListener('click', (e) => {
+            if (e.target.id === 'executionModal') closeExecutionModal();
+        });
+        document.getElementById('btnStartWork').addEventListener('click', handleStartWork);
+        document.getElementById('btnCompleteWork').addEventListener('click', handleCompleteWork);
+        document.getElementById('btnCancelWork').addEventListener('click', handleCancelWork);
+        document.getElementById('btnSaveExecution').addEventListener('click', handleSaveExecution);
+        document.getElementById('executionProgress').addEventListener('input', (e) => {
+            document.getElementById('executionProgressValue').textContent = e.target.value + '%';
+        });
+        
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 closeOrderModal();
@@ -88,9 +126,14 @@ const App = (function() {
                 closeCalendarModal();
                 closeCompareModal();
                 closeDowntimeModal();
+                closeBreakModal();
+                closeAuditLogModal();
+                closeExecutionModal();
                 editingOrderId = null;
             }
         });
+        
+        window.openExecutionModal = openExecutionModal;
     }
 
     function openAddModal() {
@@ -215,6 +258,7 @@ const App = (function() {
         Gantt.render();
         updateSchemeSelect();
         updateStatusStats();
+        updateExecutionStats();
     }
 
     function handleAutoSchedule() {
@@ -225,6 +269,7 @@ const App = (function() {
         if (scheduledCount > 0) {
             Gantt.render();
             updateStatusStats();
+            updateExecutionStats();
             Utils.showToast(`成功排程 ${scheduledCount} 个工单`, 'success');
         } else {
             Utils.showToast('没有可排程的工单', 'info');
@@ -262,6 +307,7 @@ const App = (function() {
         if (Store.loadScheme(schemeId)) {
             Gantt.render();
             updateStatusStats();
+            updateExecutionStats();
             const scheme = Store.getCurrentScheme();
             Utils.showToast(`已加载方案: ${scheme.name}`, 'success');
         }
@@ -328,6 +374,7 @@ const App = (function() {
             updateSchemeSelect();
             Gantt.render();
             updateStatusStats();
+            updateExecutionStats();
             Utils.showToast(`已复制方案: ${trimmedName}`, 'success');
         }
     }
@@ -350,6 +397,7 @@ const App = (function() {
             updateSchemeSelect();
             Gantt.render();
             updateStatusStats();
+            updateExecutionStats();
             Utils.showToast('方案已删除', 'success');
         }
     }
@@ -375,6 +423,7 @@ const App = (function() {
         document.getElementById('currentSchemeName').textContent = current.name;
         document.getElementById('compareSchemeName').textContent = '--';
         document.getElementById('compareList').innerHTML = '<div class="empty-state"><span>请选择对比方案</span></div>';
+        document.getElementById('compareLineView').innerHTML = '<div class="empty-state"><span>请选择对比方案以查看并排视图</span></div>';
         
         document.getElementById('sumCurrentTotal').textContent = '0';
         document.getElementById('sumCompareTotal').textContent = '0';
@@ -390,6 +439,9 @@ const App = (function() {
         document.getElementById('addedCount').textContent = '0';
         document.getElementById('removedCount').textContent = '0';
         document.getElementById('statusCount').textContent = '0';
+        
+        document.getElementById('chkShowChangedOnly').checked = false;
+        compareShowChangedOnly = false;
         
         const loadTable = document.getElementById('compareLoadTable');
         loadTable.innerHTML = `
@@ -414,6 +466,13 @@ const App = (function() {
         document.getElementById('compareModal').classList.remove('active');
     }
 
+    function handleShowChangedOnly(e) {
+        compareShowChangedOnly = e.target.checked;
+        if (currentCompareSchemeId) {
+            renderCompareLineView();
+        }
+    }
+
     function handleCompareSchemeChange(e) {
         const targetSchemeId = e.target.value;
         const currentId = Store.getCurrentSchemeId();
@@ -422,6 +481,7 @@ const App = (function() {
         
         if (!targetSchemeId) {
             document.getElementById('compareList').innerHTML = '<div class="empty-state"><span>请选择对比方案</span></div>';
+            document.getElementById('compareLineView').innerHTML = '<div class="empty-state"><span>请选择对比方案以查看并排视图</span></div>';
             return;
         }
         
@@ -434,6 +494,7 @@ const App = (function() {
         document.getElementById('compareSchemeName').textContent = comparison.scheme2.name;
         renderComparisonSummary(comparison);
         renderCompareList();
+        renderCompareLineView();
     }
 
     function renderComparisonSummary(comparison) {
@@ -487,6 +548,91 @@ const App = (function() {
         }
         
         loadTable.innerHTML = html;
+    }
+
+    function renderCompareLineView() {
+        const container = document.getElementById('compareLineView');
+        const currentId = Store.getCurrentSchemeId();
+        
+        if (!currentCompareSchemeId) return;
+        
+        const comparison = Store.compareSchemes(currentId, currentCompareSchemeId);
+        if (!comparison || !comparison.lineOrders) return;
+        
+        const changedIds = comparison.changedOrderIds || new Set();
+        const lines = Store.getLines();
+        const lineIds = [...lines.map(l => l.id), 'pending'];
+        const lineNames = { ...Object.fromEntries(lines.map(l => [l.id, l.name])), pending: '待排程' };
+        
+        let html = '';
+        
+        lineIds.forEach(lineId => {
+            const lineOrders1 = comparison.lineOrders[lineId]?.scheme1 || [];
+            const lineOrders2 = comparison.lineOrders[lineId]?.scheme2 || [];
+            
+            let filtered1 = lineOrders1;
+            let filtered2 = lineOrders2;
+            
+            if (compareShowChangedOnly) {
+                filtered1 = lineOrders1.filter(o => changedIds.has(o.id));
+                filtered2 = lineOrders2.filter(o => changedIds.has(o.id));
+                if (filtered1.length === 0 && filtered2.length === 0) return;
+            }
+            
+            html += `
+                <div class="compare-line-row">
+                    <div class="compare-line-header">
+                        <span class="line-dot line-${lineId.replace('line', '').toLowerCase()}"></span>
+                        <span class="compare-line-name">${lineNames[lineId]}</span>
+                        <span class="compare-line-count">
+                            当前 ${lineOrders1.length} 单 / 对比 ${lineOrders2.length} 单
+                        </span>
+                    </div>
+                    <div class="compare-line-body">
+                        <div class="compare-line-col compare-col-left">
+                            ${renderOrderColumn(filtered1, changedIds)}
+                        </div>
+                        <div class="compare-line-col compare-col-right">
+                            ${renderOrderColumn(filtered2, changedIds)}
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        if (html === '') {
+            html = '<div class="empty-state"><span>没有变更的工单</span></div>';
+        }
+        
+        container.innerHTML = html;
+    }
+
+    function renderOrderColumn(orders, changedIds) {
+        if (orders.length === 0) {
+            return '<div class="compare-col-empty">无工单</div>';
+        }
+        
+        return orders.map(o => {
+            const statusLabel = Store.STATUS_LABELS[o.status] || o.status;
+            const statusClass = `status-${o.status}`;
+            const isChanged = changedIds.has(o.id);
+            const timeLabel = o.startMinute 
+                ? `${o.dayOffset ? `Day${o.dayOffset+1} ` : ''}${Utils.formatMinutes(o.startMinute)}-${Utils.formatMinutes(o.endMinute || (o.startMinute + o.stdMinutes))}`
+                : '未排程';
+                
+            return `
+                <div class="compare-order-item ${statusClass} ${isChanged ? 'is-changed' : ''}">
+                    <div class="compare-order-model">${o.productModel}</div>
+                    <div class="compare-order-info">
+                        <span class="compare-order-qty">${o.quantity}件</span>
+                        <span class="compare-order-time">${timeLabel}</span>
+                    </div>
+                    <div class="compare-order-status status-${o.status}">
+                        <span class="status-dot"></span>${statusLabel}
+                    </div>
+                </div>
+            `;
+        }).join('');
     }
 
     function renderCompareList() {
@@ -607,6 +753,7 @@ const App = (function() {
             Gantt.render();
             updateSchemeSelect();
             updateStatusStats();
+            updateExecutionStats();
             const scheme = Store.getCurrentScheme();
             Utils.showToast(`已切换到方案: ${scheme.name}`, 'success');
         }
@@ -618,6 +765,9 @@ const App = (function() {
         document.getElementById('workStartTime').value = Utils.formatMinutes(calendar.workStartTime);
         document.getElementById('workEndTime').value = Utils.formatMinutes(calendar.workEndTime);
         
+        document.getElementById('shiftTypeSelect').value = calendar.shiftType || 'single';
+        handleShiftTypeChange();
+        
         const dayCheckboxes = document.querySelectorAll('.weekday-checkbox');
         dayCheckboxes.forEach(cb => {
             const day = parseInt(cb.value);
@@ -625,12 +775,28 @@ const App = (function() {
         });
         
         renderDowntimeList();
+        renderBreakList();
         
         document.getElementById('calendarModal').classList.add('active');
     }
 
     function closeCalendarModal() {
         document.getElementById('calendarModal').classList.remove('active');
+    }
+
+    function handleShiftTypeChange() {
+        const shiftType = document.getElementById('shiftTypeSelect').value;
+        const shifts = Store.DEFAULT_SHIFTS[shiftType] || Store.DEFAULT_SHIFTS.single;
+        
+        if (shiftType === 'custom') {
+            document.getElementById('customShiftsGroup').style.display = 'block';
+        } else {
+            document.getElementById('customShiftsGroup').style.display = 'none';
+            if (shifts.length > 0) {
+                document.getElementById('workStartTime').value = Utils.formatMinutes(shifts[0].startMinute);
+                document.getElementById('workEndTime').value = Utils.formatMinutes(shifts[shifts.length - 1].endMinute);
+            }
+        }
     }
 
     function handleSaveCalendar() {
@@ -646,6 +812,7 @@ const App = (function() {
         
         const startTimeStr = document.getElementById('workStartTime').value;
         const endTimeStr = document.getElementById('workEndTime').value;
+        const shiftType = document.getElementById('shiftTypeSelect').value;
         
         const workStartTime = Utils.timeToMinutes(startTimeStr);
         const workEndTime = Utils.timeToMinutes(endTimeStr);
@@ -658,7 +825,15 @@ const App = (function() {
         Store.updateCalendar({
             workDays,
             workStartTime,
-            workEndTime
+            workEndTime,
+            shiftType
+        });
+        
+        Store.addAuditLog(Store.AUDIT_ACTION_TYPES.CALENDAR_UPDATE, {
+            workDays,
+            workStartTime,
+            workEndTime,
+            shiftType
         });
         
         Scheduler.updateCalendarSettings();
@@ -667,7 +842,92 @@ const App = (function() {
         closeCalendarModal();
         Gantt.render();
         updateStatusStats();
+        updateExecutionStats();
         Utils.showToast('生产日历已更新', 'success');
+    }
+
+    function renderBreakList() {
+        const calendar = Store.getCalendar();
+        const list = document.getElementById('breakList');
+        
+        if (!calendar.breakPeriods || calendar.breakPeriods.length === 0) {
+            list.innerHTML = '<div class="empty-state small"><span>暂无休息时段</span></div>';
+            return;
+        }
+        
+        let html = '';
+        calendar.breakPeriods.forEach(period => {
+            html += `
+                <div class="downtime-item">
+                    <div class="downtime-info">
+                        <div class="downtime-date">${period.name || '休息'}</div>
+                        <div class="downtime-time">${Utils.formatMinutes(period.startMinute)} - ${Utils.formatMinutes(period.endMinute)}</div>
+                        ${period.recurring ? `<div class="downtime-reason">每日循环</div>` : ''}
+                    </div>
+                    <button class="downtime-delete" onclick="App.removeBreak('${period.id}')" title="删除">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                        </svg>
+                    </button>
+                </div>
+            `;
+        });
+        
+        list.innerHTML = html;
+    }
+
+    function openBreakModal() {
+        document.getElementById('breakName').value = '';
+        document.getElementById('breakStart').value = '12:00';
+        document.getElementById('breakEnd').value = '13:00';
+        document.getElementById('breakRecurring').checked = true;
+        document.getElementById('breakModal').classList.add('active');
+    }
+
+    function closeBreakModal() {
+        document.getElementById('breakModal').classList.remove('active');
+    }
+
+    function handleConfirmBreak() {
+        const name = document.getElementById('breakName').value.trim() || '休息';
+        const startStr = document.getElementById('breakStart').value;
+        const endStr = document.getElementById('breakEnd').value;
+        const recurring = document.getElementById('breakRecurring').checked;
+        
+        if (!startStr || !endStr) {
+            Utils.showToast('请填写完整的休息时间', 'error');
+            return;
+        }
+        
+        const startMinute = Utils.timeToMinutes(startStr);
+        const endMinute = Utils.timeToMinutes(endStr);
+        
+        if (startMinute >= endMinute) {
+            Utils.showToast('开始时间必须早于结束时间', 'error');
+            return;
+        }
+        
+        Store.addBreakPeriod({
+            name,
+            startMinute,
+            endMinute,
+            recurring
+        });
+        
+        closeBreakModal();
+        renderBreakList();
+        Gantt.render();
+        Utils.showToast('休息时段已添加', 'success');
+    }
+
+    function removeBreak(id) {
+        if (confirm('确定删除这个休息时段吗？')) {
+            Store.removeBreakPeriod(id);
+            renderBreakList();
+            Gantt.render();
+            Utils.showToast('休息时段已删除', 'success');
+        }
     }
 
     function renderDowntimeList() {
@@ -754,6 +1014,234 @@ const App = (function() {
         }
     }
 
+    function openExecutionModal(orderId) {
+        const order = Store.getWorkOrderById(orderId);
+        if (!order) return;
+        
+        editingOrderId = orderId;
+        const execution = Store.getExecutionData(orderId);
+        
+        document.getElementById('executionOrderModel').textContent = order.productModel;
+        document.getElementById('executionOrderQty').textContent = order.quantity + ' 件';
+        document.getElementById('executionOrderStd').textContent = order.stdMinutes + ' 分钟';
+        document.getElementById('executionStatus').textContent = Store.STATUS_LABELS[order.status] || order.status;
+        document.getElementById('executionStatus').className = 'status-badge status-' + order.status;
+        
+        document.getElementById('executionStartTime').value = execution?.actualStartTime || '';
+        document.getElementById('executionEndTime').value = execution?.actualEndTime || '';
+        document.getElementById('executionProgress').value = execution?.progress || 0;
+        document.getElementById('executionProgressValue').textContent = (execution?.progress || 0) + '%';
+        document.getElementById('executionActualQty').value = execution?.actualQuantity || 0;
+        document.getElementById('executionNotes').value = execution?.notes || '';
+        document.getElementById('executionCancelReason').value = execution?.cancelReason || '';
+        
+        document.getElementById('btnStartWork').style.display = (order.status === 'scheduled') ? 'inline-flex' : 'none';
+        document.getElementById('btnCompleteWork').style.display = (order.status === 'in_progress') ? 'inline-flex' : 'none';
+        document.getElementById('btnCancelWork').style.display = (order.status !== 'completed' && order.status !== 'cancelled') ? 'inline-flex' : 'none';
+        document.getElementById('cancelReasonGroup').style.display = (order.status === 'cancelled') ? 'block' : 'none';
+        
+        document.getElementById('executionModal').classList.add('active');
+    }
+
+    function closeExecutionModal() {
+        document.getElementById('executionModal').classList.remove('active');
+        editingOrderId = null;
+    }
+
+    function handleStartWork() {
+        if (!editingOrderId) return;
+        if (Store.startWork(editingOrderId)) {
+            const order = Store.getWorkOrderById(editingOrderId);
+            document.getElementById('executionStatus').textContent = Store.STATUS_LABELS[order.status];
+            document.getElementById('executionStatus').className = 'status-badge status-' + order.status;
+            
+            const execution = Store.getExecutionData(editingOrderId);
+            document.getElementById('executionStartTime').value = execution?.actualStartTime || '';
+            document.getElementById('executionProgress').value = execution?.progress || 5;
+            document.getElementById('executionProgressValue').textContent = (execution?.progress || 5) + '%';
+            
+            document.getElementById('btnStartWork').style.display = 'none';
+            document.getElementById('btnCompleteWork').style.display = 'inline-flex';
+            
+            Gantt.render();
+            updateStatusStats();
+            updateExecutionStats();
+            Utils.showToast('工单已开始生产', 'success');
+        }
+    }
+
+    function handleCompleteWork() {
+        if (!editingOrderId) return;
+        
+        const order = Store.getWorkOrderById(editingOrderId);
+        const actualQty = parseInt(document.getElementById('executionActualQty').value) || order.quantity;
+        
+        if (Store.completeWork(editingOrderId, actualQty)) {
+            const updatedOrder = Store.getWorkOrderById(editingOrderId);
+            document.getElementById('executionStatus').textContent = Store.STATUS_LABELS[updatedOrder.status];
+            document.getElementById('executionStatus').className = 'status-badge status-' + updatedOrder.status;
+            
+            const execution = Store.getExecutionData(editingOrderId);
+            document.getElementById('executionEndTime').value = execution?.actualEndTime || '';
+            document.getElementById('executionProgress').value = 100;
+            document.getElementById('executionProgressValue').textContent = '100%';
+            document.getElementById('executionActualQty').value = execution?.actualQuantity || actualQty;
+            
+            document.getElementById('btnCompleteWork').style.display = 'none';
+            document.getElementById('btnCancelWork').style.display = 'none';
+            
+            Gantt.render();
+            updateStatusStats();
+            updateExecutionStats();
+            Utils.showToast('工单已完成', 'success');
+        }
+    }
+
+    function handleCancelWork() {
+        if (!editingOrderId) return;
+        
+        const reason = prompt('请输入取消原因：', '计划调整');
+        if (reason === null) return;
+        
+        if (Store.cancelWork(editingOrderId, reason)) {
+            const order = Store.getWorkOrderById(editingOrderId);
+            document.getElementById('executionStatus').textContent = Store.STATUS_LABELS[order.status];
+            document.getElementById('executionStatus').className = 'status-badge status-' + order.status;
+            
+            const execution = Store.getExecutionData(editingOrderId);
+            document.getElementById('executionCancelReason').value = execution?.cancelReason || reason;
+            document.getElementById('cancelReasonGroup').style.display = 'block';
+            
+            document.getElementById('btnStartWork').style.display = 'none';
+            document.getElementById('btnCompleteWork').style.display = 'none';
+            document.getElementById('btnCancelWork').style.display = 'none';
+            
+            Gantt.render();
+            updateStatusStats();
+            updateExecutionStats();
+            Utils.showToast('工单已取消', 'success');
+        }
+    }
+
+    function handleSaveExecution() {
+        if (!editingOrderId) return;
+        
+        const updates = {};
+        
+        const startStr = document.getElementById('executionStartTime').value;
+        if (startStr) updates.actualStartTime = startStr;
+        
+        const endStr = document.getElementById('executionEndTime').value;
+        if (endStr) updates.actualEndTime = endStr;
+        
+        const progress = parseInt(document.getElementById('executionProgress').value);
+        if (!isNaN(progress)) updates.progress = progress;
+        
+        const actualQty = parseInt(document.getElementById('executionActualQty').value);
+        if (!isNaN(actualQty)) updates.actualQuantity = actualQty;
+        
+        const notes = document.getElementById('executionNotes').value.trim();
+        if (notes) updates.notes = notes;
+        
+        Store.updateExecutionData(editingOrderId, updates);
+        Gantt.render();
+        updateExecutionStats();
+        Utils.showToast('执行数据已保存', 'success');
+    }
+
+    function openAuditLogModal() {
+        renderAuditLogList();
+        document.getElementById('auditLogModal').classList.add('active');
+    }
+
+    function closeAuditLogModal() {
+        document.getElementById('auditLogModal').classList.remove('active');
+    }
+
+    function renderAuditLogList() {
+        const actionFilter = document.getElementById('auditActionFilter').value;
+        const logs = Store.getAuditLogs(actionFilter ? { actionType: actionFilter } : null);
+        const list = document.getElementById('auditLogList');
+        
+        if (logs.length === 0) {
+            list.innerHTML = '<div class="empty-state"><span>暂无变更记录</span></div>';
+            return;
+        }
+        
+        const actionLabels = {
+            order_add: '添加工单',
+            order_edit: '编辑工单',
+            order_delete: '删除工单',
+            order_move: '移动工单',
+            order_status_change: '状态变更',
+            scheme_save: '保存方案',
+            scheme_switch: '切换方案',
+            scheme_copy: '复制方案',
+            scheme_delete: '删除方案',
+            auto_schedule: '自动排程',
+            calendar_update: '日历更新'
+        };
+        
+        let html = '';
+        logs.slice(0, 100).forEach(log => {
+            const timeStr = new Date(log.timestamp).toLocaleString('zh-CN');
+            const actionLabel = actionLabels[log.actionType] || log.actionType;
+            const details = formatAuditDetails(log);
+            
+            html += `
+                <div class="audit-item audit-${log.actionType}">
+                    <div class="audit-header">
+                        <span class="audit-action">${actionLabel}</span>
+                        <span class="audit-time">${timeStr}</span>
+                    </div>
+                    <div class="audit-details">${details}</div>
+                    ${log.schemeId ? `<div class="audit-scheme">方案: ${log.schemeName || log.schemeId}</div>` : ''}
+                </div>
+            `;
+        });
+        
+        list.innerHTML = html;
+    }
+
+    function formatAuditDetails(log) {
+        const d = log.details || {};
+        
+        switch (log.actionType) {
+            case 'order_add':
+                return `新增工单: ${d.productModel || '未知'} (${d.quantity || 0}件, ${d.stdMinutes || 0}分钟)`;
+            case 'order_edit':
+                return `编辑工单: ${d.productModel || d.orderId || '未知'}${d.changes ? ` (${d.changes.join(', ')})` : ''}`;
+            case 'order_delete':
+                return `删除工单: ${d.productModel || d.orderId || '未知'}`;
+            case 'order_move':
+                return `移动工单: ${d.model || d.orderId || '未知'} 从 ${formatSlot(d.from)} → ${formatSlot(d.to)}`;
+            case 'order_status_change':
+                return `状态变更: ${d.model || d.orderId || '未知'} ${Store.STATUS_LABELS[d.from] || d.from} → ${Store.STATUS_LABELS[d.to] || d.to}`;
+            case 'scheme_save':
+                return `保存方案: ${d.name || '未知'}${d.asNew ? ' (新建)' : ''}`;
+            case 'scheme_switch':
+                return `切换方案: ${d.fromName || d.from} → ${d.toName || d.to}`;
+            case 'scheme_copy':
+                return `复制方案: ${d.fromName || d.from} → ${d.toName || d.to}`;
+            case 'scheme_delete':
+                return `删除方案: ${d.name || '未知'}`;
+            case 'auto_schedule':
+                return `自动排程: 算法=${d.algorithm === 'edd' ? '最早交货优先' : '最短工时优先'}, 成功${d.scheduledCount || 0}/${d.totalOrders || 0}单`;
+            case 'calendar_update':
+                return `日历更新: ${d.workDays?.length || 0}个工作日, 班次=${d.shiftType || '默认'}`;
+            default:
+                return JSON.stringify(d).substring(0, 100);
+        }
+    }
+
+    function formatSlot(slot) {
+        if (!slot || !slot.lineId) return '待排程';
+        const lineName = Store.getLineById(slot.lineId)?.name || slot.lineId;
+        const day = slot.dayOffset ? `Day${slot.dayOffset + 1}` : '今天';
+        const time = slot.startMinute ? Utils.formatMinutes(slot.startMinute) : '';
+        return `${lineName} ${day} ${time}`;
+    }
+
     function updateStatusStats() {
         const stats = Store.getStatusStats();
         
@@ -764,12 +1252,31 @@ const App = (function() {
         document.getElementById('countCancelled').textContent = stats.cancelled || 0;
     }
 
+    function updateExecutionStats() {
+        const stats = Store.getExecutionStats();
+        
+        const inProgressEl = document.getElementById('countExecInProgress');
+        const completedTodayEl = document.getElementById('countCompletedToday');
+        const avgProgressEl = document.getElementById('avgProgress');
+        
+        if (inProgressEl) inProgressEl.textContent = stats.inProgressCount || 0;
+        if (completedTodayEl) completedTodayEl.textContent = stats.completedTodayCount || 0;
+        if (avgProgressEl) avgProgressEl.textContent = (stats.avgProgress || 0).toFixed(0) + '%';
+    }
+
     document.addEventListener('DOMContentLoaded', init);
 
-    return {
+    const App = {
         init,
         openEditModal,
         removeDowntime,
-        updateStatusStats
+        removeBreak,
+        updateStatusStats,
+        updateExecutionStats,
+        openExecutionModal
     };
+    if (typeof window !== 'undefined') {
+        window.App = App;
+    }
+    return App;
 })();

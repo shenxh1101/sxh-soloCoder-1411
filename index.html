@@ -98,6 +98,16 @@
                         </svg>
                         日历设置
                     </button>
+                    <button class="btn btn-secondary" id="btnAuditLog">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                            <polyline points="10 9 9 9 8 9"/>
+                        </svg>
+                        变更记录
+                    </button>
                 </div>
                 
                 <div class="scheme-manager">
@@ -158,6 +168,28 @@
                             <circle cx="12" cy="12" r="10"/>
                             <polyline points="12 6 12 12 16 14"/>
                         </svg>
+                        执行跟踪
+                    </h3>
+                    <div class="stats-grid">
+                        <div class="stat-card stat-warning">
+                            <span class="stat-value" id="countExecInProgress">0</span>
+                            <span class="stat-label">在产数</span>
+                        </div>
+                        <div class="stat-card stat-success">
+                            <span class="stat-value" id="countCompletedToday">0</span>
+                            <span class="stat-label">今日完数</span>
+                        </div>
+                        <div class="stat-card stat-info">
+                            <span class="stat-value" id="avgProgress">0%</span>
+                            <span class="stat-label">平均进度</span>
+                        </div>
+                    </div>
+                    
+                    <h3 class="panel-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <polyline points="12 6 12 12 16 14"/>
+                        </svg>
                         工单状态
                     </h3>
                     <div class="status-grid">
@@ -186,6 +218,14 @@
                             <span class="status-text">已取消</span>
                             <span class="status-count" id="countCancelled">0</span>
                         </div>
+                    </div>
+                    
+                    <div class="panel-options">
+                        <label class="checkbox-label inline-label">
+                            <input type="checkbox" id="chkShowHistorical">
+                            <span class="checkmark"></span>
+                            显示历史工单痕迹
+                        </label>
                     </div>
                 </div>
 
@@ -382,7 +422,7 @@
     </div>
 
     <div class="modal-overlay" id="compareModal">
-        <div class="modal modal-lg">
+        <div class="modal modal-xl">
             <div class="modal-header">
                 <h2>方案对比</h2>
                 <button class="modal-close" id="compareModalClose">
@@ -441,6 +481,22 @@
                 </div>
 
                 <div class="compare-section">
+                    <h3 class="compare-section-title">
+                        产线工单并排视图
+                        <label class="checkbox-label inline-label float-right">
+                            <input type="checkbox" id="chkShowChangedOnly">
+                            <span class="checkmark"></span>
+                            只看有变化的工单
+                        </label>
+                    </h3>
+                    <div class="compare-line-view" id="compareLineView">
+                        <div class="empty-state">
+                            <span>请选择对比方案以查看并排视图</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="compare-section">
                     <h3 class="compare-section-title">产线负载对比</h3>
                     <div class="compare-table" id="compareLoadTable">
                         <div class="compare-table-header">
@@ -476,7 +532,7 @@
     </div>
 
     <div class="modal-overlay" id="calendarModal">
-        <div class="modal">
+        <div class="modal modal-lg">
             <div class="modal-header">
                 <h2>生产日历设置</h2>
                 <button class="modal-close" id="calendarModalClose">
@@ -521,6 +577,16 @@
                     </div>
                 </div>
 
+                <div class="form-group">
+                    <label for="shiftTypeSelect">班次类型</label>
+                    <select id="shiftTypeSelect">
+                        <option value="single">单班制（8:00-18:00）</option>
+                        <option value="double">双班制（8:00-13:00, 14:00-18:00）</option>
+                        <option value="triple">三班制（8:00-12:00, 12:00-16:00, 16:00-20:00）</option>
+                        <option value="custom">自定义班次</option>
+                    </select>
+                </div>
+
                 <div class="form-row">
                     <div class="form-group">
                         <label for="workStartTime">上班时间</label>
@@ -532,8 +598,31 @@
                     </div>
                 </div>
 
+                <div class="form-group" id="customShiftsGroup" style="display: none;">
+                    <label>自定义班次配置</label>
+                    <div class="empty-state small" id="customShiftsHint">
+                        <span>自定义班次支持将在后续版本完善，当前可通过修改上下班时间 + 休息时段组合实现</span>
+                    </div>
+                </div>
+
                 <div class="form-group">
-                    <label>停机时段</label>
+                    <label>休息时段（每日自动扣除产能）</label>
+                    <div class="downtime-list" id="breakList">
+                        <div class="empty-state small">
+                            <span>暂无休息时段</span>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-block" id="btnAddBreak">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"/>
+                            <line x1="5" y1="12" x2="19" y2="12"/>
+                        </svg>
+                        添加休息时段
+                    </button>
+                </div>
+
+                <div class="form-group">
+                    <label>停机时段（特定日期）</label>
                     <div class="downtime-list" id="downtimeList">
                         <div class="empty-state small">
                             <span>暂无停机时段</span>
@@ -551,6 +640,41 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" id="btnCancelCalendar">取消</button>
                     <button type="button" class="btn btn-primary" id="btnSaveCalendar">保存设置</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="breakModal">
+        <div class="modal modal-sm">
+            <div class="modal-header">
+                <h2>添加休息时段</h2>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="breakName">休息名称</label>
+                    <input type="text" id="breakName" placeholder="例如：午餐、下午茶">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="breakStart">开始时间</label>
+                        <input type="time" id="breakStart" value="12:00">
+                    </div>
+                    <div class="form-group">
+                        <label for="breakEnd">结束时间</label>
+                        <input type="time" id="breakEnd" value="13:00">
+                    </div>
+                </div>
+                <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="breakRecurring" checked>
+                        <span class="checkmark"></span>
+                        每日循环（每个工作日都生效）
+                    </label>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" id="btnCancelBreak">取消</button>
+                    <button type="button" class="btn btn-primary" id="btnConfirmBreak">确认添加</button>
                 </div>
             </div>
         </div>
@@ -578,7 +702,7 @@
                 </div>
                 <div class="form-group">
                     <label for="downtimeReason">停机原因</label>
-                    <input type="text" id="downtimeReason" placeholder="例如：设备维护、午餐休息">
+                    <input type="text" id="downtimeReason" placeholder="例如：设备维护、盘点">
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" id="btnCancelDowntime">取消</button>
@@ -588,13 +712,140 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="executionModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>执行登记详情</h2>
+                <button class="modal-close" id="executionModalClose">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="execution-info-bar">
+                    <div class="execution-order-row">
+                        <span class="execution-order-label">产品型号</span>
+                        <span class="execution-order-value" id="executionOrderModel">--</span>
+                    </div>
+                    <div class="execution-order-row">
+                        <span class="execution-order-label">数量</span>
+                        <span class="execution-order-value" id="executionOrderQty">--</span>
+                    </div>
+                    <div class="execution-order-row">
+                        <span class="execution-order-label">标准工时</span>
+                        <span class="execution-order-value" id="executionOrderStd">--</span>
+                    </div>
+                    <div class="execution-order-row">
+                        <span class="execution-order-label">当前状态</span>
+                        <span class="status-badge status-pending" id="executionStatus">待排程</span>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="executionStartTime">实际开工时间</label>
+                    <input type="datetime-local" id="executionStartTime">
+                </div>
+                <div class="form-group">
+                    <label for="executionEndTime">实际完工时间</label>
+                    <input type="datetime-local" id="executionEndTime">
+                </div>
+                <div class="form-group">
+                    <label>生产进度 <span id="executionProgressValue" class="progress-label">0%</span></label>
+                    <input type="range" id="executionProgress" min="0" max="100" value="0" class="progress-slider">
+                </div>
+                <div class="form-group">
+                    <label for="executionActualQty">实际完成数量</label>
+                    <input type="number" id="executionActualQty" min="0" value="0">
+                </div>
+                <div class="form-group">
+                    <label for="executionNotes">执行备注</label>
+                    <textarea id="executionNotes" rows="3" placeholder="记录生产过程中的异常、调整原因等"></textarea>
+                </div>
+                <div class="form-group" id="cancelReasonGroup" style="display: none;">
+                    <label for="executionCancelReason">取消原因</label>
+                    <input type="text" id="executionCancelReason" readonly>
+                </div>
+
+                <div class="modal-footer execution-actions">
+                    <button type="button" class="btn btn-secondary" id="btnStartWork">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                        开始生产
+                    </button>
+                    <button type="button" class="btn btn-success" id="btnCompleteWork">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"/>
+                        </svg>
+                        完成生产
+                    </button>
+                    <button type="button" class="btn btn-danger" id="btnCancelWork">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"/>
+                            <line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                        取消工单
+                    </button>
+                    <div style="flex: 1;"></div>
+                    <button type="button" class="btn btn-secondary" id="btnCloseExecution">关闭</button>
+                    <button type="button" class="btn btn-primary" id="btnSaveExecution">保存数据</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="auditLogModal">
+        <div class="modal modal-lg">
+            <div class="modal-header">
+                <h2>排程变更记录</h2>
+                <button class="modal-close" id="auditLogModalClose">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group inline-group">
+                    <label for="auditActionFilter" class="inline-label">操作类型</label>
+                    <select id="auditActionFilter">
+                        <option value="">全部操作</option>
+                        <option value="order_add">添加工单</option>
+                        <option value="order_edit">编辑工单</option>
+                        <option value="order_delete">删除工单</option>
+                        <option value="order_move">移动工单</option>
+                        <option value="order_status_change">状态变更</option>
+                        <option value="scheme_save">保存方案</option>
+                        <option value="scheme_switch">切换方案</option>
+                        <option value="scheme_copy">复制方案</option>
+                        <option value="scheme_delete">删除方案</option>
+                        <option value="auto_schedule">自动排程</option>
+                        <option value="calendar_update">日历更新</option>
+                    </select>
+                </div>
+
+                <div class="audit-log-list" id="auditLogList">
+                    <div class="empty-state">
+                        <span>暂无变更记录</span>
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" id="btnCloseAuditLog">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="toast-container" id="toastContainer"></div>
 
-    <script src="js/utils.js"></script>
-    <script src="js/store.js"></script>
-    <script src="js/gantt.js"></script>
-    <script src="js/scheduler.js"></script>
-    <script src="js/export.js"></script>
-    <script src="js/app.js"></script>
+    <script src="js/utils.js?v=5"></script>
+    <script src="js/store.js?v=5"></script>
+    <script src="js/gantt.js?v=5"></script>
+    <script src="js/scheduler.js?v=5"></script>
+    <script src="js/export.js?v=5"></script>
+    <script src="js/app.js?v=5"></script>
 </body>
 </html>
