@@ -86,6 +86,7 @@ const Store = (function() {
         { id: 'lineC', name: 'C线', color: '#34c759', shiftType: 'single' }
     ];
 
+    const DEFAULT_SETUP_TIME = 0;
     const DEFAULT_CALENDAR = {
         workDays: [1, 2, 3, 4, 5],
         downtimePeriods: [],
@@ -169,7 +170,29 @@ const Store = (function() {
     function loadExecutionData() {
         try {
             const stored = localStorage.getItem(EXECUTION_KEY);
-            state.executionData = stored ? JSON.parse(stored) : {};
+            const raw = stored ? JSON.parse(stored) : {};
+            // 数据结构：{ schemeId: { orderId: { actualStartTime, ... } } }
+            // 兼容旧格式（扁平结构）：迁移到当前方案桶里
+            if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+                const keys = Object.keys(raw);
+                const isLegacy = keys.length > 0 && raw[keys[0]] && typeof raw[keys[0]] === 'object' && 'progress' in raw[keys[0]];
+                if (isLegacy) {
+                    // 旧格式: { orderId: {progress, ...} }
+                    const currentSchemeId = state.currentSchemeId || 'default';
+                    state.executionData = { [currentSchemeId]: raw };
+                    // 立即存回新格式
+                    saveExecutionData();
+                    console.log('[Store] 执行数据已从旧格式迁移到新格式');
+                } else {
+                    state.executionData = raw;
+                }
+            } else {
+                state.executionData = {};
+            }
+            // 确保当前方案桶存在
+            if (state.currentSchemeId && !state.executionData[state.currentSchemeId]) {
+                state.executionData[state.currentSchemeId] = {};
+            }
         } catch (e) {
             console.error('加载执行数据失败:', e);
             state.executionData = {};
@@ -182,6 +205,14 @@ const Store = (function() {
         } catch (e) {
             console.error('保存执行数据失败:', e);
         }
+    }
+
+    function _getSchemeExecBucket(schemeId = null) {
+        const sid = schemeId || state.currentSchemeId || 'default';
+        if (!state.executionData[sid]) {
+            state.executionData[sid] = {};
+        }
+        return state.executionData[sid];
     }
 
     function addAuditLog(actionType, details = {}) {
@@ -503,32 +534,36 @@ const Store = (function() {
         return null;
     }
 
-    function getExecutionData(orderId) {
-        return state.executionData[orderId] || {
+    function getExecutionData(orderId, schemeId = null) {
+        const bucket = _getSchemeExecBucket(schemeId);
+        return bucket[orderId] || {
             actualStartTime: null,
             actualEndTime: null,
             progress: 0,
             actualQuantity: 0,
-            notes: ''
+            notes: '',
+            cancelReason: ''
         };
     }
 
-    function updateExecutionData(orderId, updates) {
-        if (!state.executionData[orderId]) {
-            state.executionData[orderId] = {
+    function updateExecutionData(orderId, updates, schemeId = null) {
+        const bucket = _getSchemeExecBucket(schemeId);
+        if (!bucket[orderId]) {
+            bucket[orderId] = {
                 actualStartTime: null,
                 actualEndTime: null,
                 progress: 0,
                 actualQuantity: 0,
-                notes: ''
+                notes: '',
+                cancelReason: ''
             };
         }
-        state.executionData[orderId] = {
-            ...state.executionData[orderId],
+        bucket[orderId] = {
+            ...bucket[orderId],
             ...updates
         };
         saveExecutionData();
-        return state.executionData[orderId];
+        return bucket[orderId];
     }
 
     function startWork(orderId) {
